@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Personal Finance OS</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="skip-link" href="#main">Skip to content</a>
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 7.5h16M6.5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17V7a2.5 2.5 0 0 1 2.5-2.5Z" /><path d="M8 13h4M8 16h8" /></svg>
+          </div>
+          <div>
+            <span>Local vault</span>
+            <strong>Finance OS</strong>
+          </div>
+        </div>
+
+        <nav class="nav-list" id="navList">
+          <button class="nav-button active" data-view="overview" aria-current="page">
+            <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z" /></svg>
+            <span>Overview</span>
+          </button>
+          <button class="nav-button" data-view="transactions">
+            <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+            <span>Transactions</span>
+          </button>
+          <button class="nav-button" data-view="budgets">
+            <svg viewBox="0 0 24 24"><path d="M4 18V6m5 12V9m5 9V4m5 14v-6" /></svg>
+            <span>Budgets</span>
+          </button>
+          <button class="nav-button" data-view="cashflow">
+            <svg viewBox="0 0 24 24"><path d="M4 17h16M7 14l4-4 3 3 4-6" /></svg>
+            <span>Cashflow</span>
+          </button>
+          <button class="nav-button" data-view="subscriptions">
+            <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z" /><path d="M4 10h3M17 10h3M4 14h3M17 14h3" /></svg>
+            <span>Subscriptions</span>
+          </button>
+          <button class="nav-button" data-view="accounts">
+            <svg viewBox="0 0 24 24"><path d="M3.5 9 12 4l8.5 5" /><path d="M5 9v9h14V9M9 18v-6h6v6" /></svg>
+            <span>Accounts</span>
+          </button>
+          <button class="nav-button" data-view="documents">
+            <svg viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20H7z" /><path d="M14 3.5v3h3M9.5 11h5M9.5 15h5" /></svg>
+            <span>Documents</span>
+          </button>
+          <button class="nav-button" data-view="taxes">
+            <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6z" /><path d="M9 8h6M9 12h6M9 16h3" /></svg>
+            <span>Taxes</span>
+          </button>
+          <button class="nav-button" data-view="automation">
+            <svg viewBox="0 0 24 24"><path d="M7 8h10M7 16h10" /><path d="m15 5 3 3-3 3M9 13l-3 3 3 3" /></svg>
+            <span>Automation</span>
+          </button>
+          <button class="nav-button" data-view="connections">
+            <svg viewBox="0 0 24 24"><path d="M7.5 12a4.5 4.5 0 0 1 4.5-4.5h2" /><path d="M16.5 12A4.5 4.5 0 0 1 12 16.5h-2" /><path d="M14 7.5h3.5V4M10 16.5H6.5V20" /></svg>
+            <span>Connections</span>
+          </button>
+        </nav>
+
+        <div class="vault-card">
+          <span id="vaultState">Checking vault</span>
+          <strong id="vaultDetail">Local SQLite</strong>
+        </div>
+      </aside>
+
+      <main id="main" class="main" tabindex="-1">
+        <header class="topbar">
+          <div class="title-block">
+            <span id="viewEyebrow">Personal CFO</span>
+            <h1 id="viewTitle">Overview</h1>
+          </div>
+          <div class="topbar-actions">
+            <a class="icon-action" href="/api/transactions.csv" title="Export CSV" aria-label="Export CSV">
+              <svg viewBox="0 0 24 24"><path d="M12 4v10" /><path d="m8 10 4 4 4-4" /><path d="M5 19h14" /></svg>
+            </a>
+            <button class="icon-action" id="syncBtn" title="Sync now" aria-label="Sync now">
+              <svg viewBox="0 0 24 24"><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M18 12a6 6 0 0 0-10-4.5L4 12m2 0a6 6 0 0 0 10 4.5L20 12" /></svg>
+            </button>
+            <button class="secondary-button" id="appleImportBtn">
+              <svg viewBox="0 0 24 24"><path d="M12 4v12" /><path d="m8 12 4 4 4-4" /><path d="M5 20h14" /></svg>
+              <span>Apple CSV</span>
+            </button>
+            <button class="primary-button" id="addAccountBtn">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+              <span>Account</span>
+            </button>
+          </div>
+        </header>
+
+        <section id="overview" class="view active" aria-labelledby="overview-title">
+          <h2 id="overview-title" class="sr-only">Overview</h2>
+          <div class="overview-layout">
+            <article class="hero-panel">
+              <div class="panel-top">
+                <div>
+                  <span class="label">Net worth</span>
+                  <strong id="netWorthValue" class="hero-number">$0</strong>
+                </div>
+                <div class="segmented" id="historyRanges" aria-label="History range">
+                  <button data-range="1M">1M</button>
+                  <button data-range="3M">3M</button>
+                  <button data-range="1Y" class="active">1Y</button>
+                  <button data-range="ALL">All</button>
+                </div>
+              </div>
+              <div id="netWorthChart" class="chart-frame skeleton"></div>
+              <div class="metric-strip">
+                <div><span>Assets</span><strong id="assetTotal">$0</strong></div>
+                <div><span>Debt</span><strong id="debtTotal">$0</strong></div>
+                <div><span>Runway</span><strong id="runwayValue">n/a</strong></div>
+              </div>
+            </article>
+
+            <div class="metric-grid">
+              <article class="metric-card"><span>Income</span><strong id="incomeMetric">$0</strong><small id="incomeMeta">This month</small></article>
+              <article class="metric-card"><span>Spend</span><strong id="spendMetric">$0</strong><small id="spendMeta">This month</small></article>
+              <article class="metric-card"><span>Accounts</span><strong id="accountMetric">0</strong><small id="connectionMeta">0 links</small></article>
+              <article class="metric-card"><span>Actions</span><strong id="actionMetric">0</strong><small id="docMeta">0 docs</small></article>
+            </div>
+          </div>
+
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span class="label">Queue</span><h3>Action stack</h3></div>
+              </div>
+              <div id="actionQueue" class="row-stack skeleton"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span class="label">Budget pulse</span><h3>Current month</h3></div>
+              </div>
+              <div id="budgetPulse" class="row-stack skeleton"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span class="label">Spend mix</span><h3>Categories</h3></div>
+              </div>
+              <div id="categoryDonut" class="donut-wrap skeleton"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span class="label">Ledger</span><h3>Recent activity</h3></div>
+              </div>
+              <div id="recentTransactions" class="row-stack skeleton"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="transactions" class="view" aria-labelledby="transactions-title">
+          <div class="section-head">
+            <div><span class="label">Unified ledger</span><h2 id="transactions-title">Transactions</h2></div>
+            <div class="toolbar">
+              <label class="search-box" for="txSearch">
+                <svg viewBox="0 0 24 24"><path d="m20 20-4-4" /><circle cx="11" cy="11" r="6" /></svg>
+                <input id="txSearch" type="search" placeholder="Search" autocomplete="off" />
+              </label>
+              <select id="categoryFilter" aria-label="Category filter"></select>
+            </div>
+          </div>
+          <div class="table-scroller">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th><button data-sort="date">Date</button></th>
+                  <th><button data-sort="merchant">Merchant</button></th>
+                  <th><button data-sort="category">Category</button></th>
+                  <th><button data-sort="provider">Source</button></th>
+                  <th class="number"><button data-sort="amount">Amount</button></th>
+                </tr>
+              </thead>
+              <tbody id="transactionTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="budgets" class="view" aria-labelledby="budgets-title">
+          <div class="section-head">
+            <div><span class="label">Plan vs actual</span><h2 id="budgets-title">Budgets</h2></div>
+            <button class="primary-button" id="addBudgetBtn">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+              <span>Budget</span>
+            </button>
+          </div>
+          <div id="budgetGrid" class="card-grid"></div>
+        </section>
+
+        <section id="cashflow" class="view" aria-labelledby="cashflow-title">
+          <div class="section-head">
+            <div><span class="label">Income vs spend</span><h2 id="cashflow-title">Cashflow</h2></div>
+          </div>
+          <div class="dashboard-grid two">
+            <article class="panel wide"><div id="cashflowChart" class="chart-frame tall skeleton"></div></article>
+            <article class="panel"><div id="cashflowStats" class="row-stack skeleton"></div></article>
+          </div>
+        </section>
+
+        <section id="subscriptions" class="view" aria-labelledby="subscriptions-title">
+          <div class="section-head">
+            <div><span class="label">Recurring detection</span><h2 id="subscriptions-title">Subscriptions</h2></div>
+          </div>
+          <div id="subscriptionGrid" class="card-grid"></div>
+        </section>
+
+        <section id="accounts" class="view" aria-labelledby="accounts-title">
+          <div class="section-head">
+            <div><span class="label">Balance sheet</span><h2 id="accounts-title">Accounts</h2></div>
+          </div>
+          <div id="accountGrid" class="card-grid"></div>
+        </section>
+
+        <section id="documents" class="view" aria-labelledby="documents-title">
+          <div class="section-head">
+            <div><span class="label">Evidence locker</span><h2 id="documents-title">Documents</h2></div>
+            <select id="documentYear" aria-label="Document year"></select>
+          </div>
+          <div id="documentProgress" class="progress-summary"></div>
+          <div id="documentGrid" class="card-grid compact"></div>
+        </section>
+
+        <section id="taxes" class="view" aria-labelledby="taxes-title">
+          <div class="section-head">
+            <div><span class="label">Filing prep</span><h2 id="taxes-title">Taxes</h2></div>
+            <select id="taxYear" aria-label="Tax year"></select>
+          </div>
+          <div class="dashboard-grid two">
+            <article class="panel"><div id="taxTaskList" class="row-stack skeleton"></div></article>
+            <article class="panel"><div id="deductionTracker" class="row-stack skeleton"></div></article>
+          </div>
+        </section>
+
+        <section id="automation" class="view" aria-labelledby="automation-title">
+          <div class="section-head">
+            <div><span class="label">Categorization</span><h2 id="automation-title">Automation</h2></div>
+            <div class="toolbar">
+              <button class="secondary-button" id="runRulesBtn">
+                <svg viewBox="0 0 24 24"><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M18 12a6 6 0 0 0-10-4.5L4 12m2 0a6 6 0 0 0 10 4.5L20 12" /></svg>
+                <span>Run rules</span>
+              </button>
+              <button class="primary-button" id="addRuleBtn">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+                <span>Rule</span>
+              </button>
+            </div>
+          </div>
+          <div id="ruleGrid" class="card-grid compact"></div>
+        </section>
+
+        <section id="connections" class="view" aria-labelledby="connections-title">
+          <div class="section-head">
+            <div><span class="label">Providers</span><h2 id="connections-title">Connections</h2></div>
+          </div>
+          <div class="dashboard-grid two">
+            <article class="panel"><div id="connectionList" class="row-stack skeleton"></div></article>
+            <article class="panel"><div id="providerPanel" class="row-stack skeleton"></div></article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <nav class="bottom-tabs" id="bottomTabs" aria-label="Mobile navigation">
+      <button data-view="overview" class="active"><span>Overview</span></button>
+      <button data-view="transactions"><span>Ledger</span></button>
+      <button data-view="budgets"><span>Budgets</span></button>
+      <button data-view="cashflow"><span>Flow</span></button>
+      <button data-view="subscriptions"><span>Subs</span></button>
+      <button data-view="accounts"><span>Accounts</span></button>
+      <button data-view="documents"><span>Docs</span></button>
+      <button data-view="taxes"><span>Taxes</span></button>
+      <button data-view="automation"><span>Rules</span></button>
+      <button data-view="connections"><span>Links</span></button>
+    </nav>
+
+    <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+    <dialog id="accountDialog" class="dialog">
+      <form method="dialog" id="accountForm">
+        <div class="dialog-head">
+          <div><span class="label">Manual account</span><h2>Add account</h2></div>
+          <button class="icon-action" value="cancel" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label>Name<input name="name" required placeholder="Primary checking" /></label>
+          <label>Institution<input name="institution" placeholder="Bank or servicer" /></label>
+          <label>Type
+            <select name="kind">
+              <option value="checking">Checking</option>
+              <option value="savings">Savings</option>
+              <option value="credit">Credit card</option>
+              <option value="investment">Investment</option>
+              <option value="student_loan">Student loan</option>
+              <option value="loan">Loan</option>
+            </select>
+          </label>
+          <label>Balance<input name="balance" type="number" step="0.01" required placeholder="0.00" /></label>
+          <label class="full">Notes<textarea name="notes" rows="3" placeholder="Context"></textarea></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">Cancel</button>
+          <button class="primary-button" value="default">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="appleDialog" class="dialog">
+      <form method="dialog" id="appleForm">
+        <div class="dialog-head">
+          <div><span class="label">Apple Card</span><h2>Import CSV</h2></div>
+          <button class="icon-action" value="cancel" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <label class="full">CSV text<textarea name="csv" rows="10" required placeholder="Transaction Date,Description,Amount,Category"></textarea></label>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">Cancel</button>
+          <button class="primary-button" value="default">Import</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="budgetDialog" class="dialog small">
+      <form method="dialog" id="budgetForm">
+        <div class="dialog-head">
+          <div><span class="label">Monthly limit</span><h2>Add budget</h2></div>
+          <button class="icon-action" value="cancel" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label>Category<input name="category" required placeholder="Groceries" /></label>
+          <label>Limit<input name="monthlyLimit" type="number" step="0.01" required placeholder="450" /></label>
+          <label>Color<input name="color" type="color" value="#3ddc97" /></label>
+          <label class="full">Notes<textarea name="notes" rows="3" placeholder="Scope"></textarea></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">Cancel</button>
+          <button class="primary-button" value="default">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ruleDialog" class="dialog small">
+      <form method="dialog" id="ruleForm">
+        <div class="dialog-head">
+          <div><span class="label">Pattern match</span><h2>Add rule</h2></div>
+          <button class="icon-action" value="cancel" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label>Pattern<input name="pattern" required placeholder="apple services" /></label>
+          <label>Category<input name="category" required placeholder="Subscriptions" /></label>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">Cancel</button>
+          <button class="primary-button" value="default">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -55,6 +55,46 @@ function addMonths(month, delta) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
+function addDaysText(dateText, delta) {
+  const date = new Date(`${dateText}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + delta)
+  return date.toISOString().slice(0, 10)
+}
+
+// Deterministic dense weekly net-worth history for the demo dataset.
+// Values are fully computed (no Math.random at seed time) so screenshots and
+// audits are reproducible. All figures are integers, so net_worth === assets -
+// debt holds EXACTLY with zero float drift for every row.
+function demoWeeklySnapshots() {
+  const start = '2026-01-01'
+  const end = '2026-07-06'
+  const dates = []
+  let step = 0
+  let cursor = start
+  while (cursor <= end) {
+    dates.push(cursor)
+    step += 1
+    cursor = addDaysText(start, step * 7)
+  }
+  if (dates[dates.length - 1] !== end) dates.push(end)
+
+  return dates.map((date, i) => {
+    // Upward trend with a mild deterministic sine wiggle on each series.
+    const assets = 27480 + i * 70 + Math.round(120 * Math.sin(i * 0.9))
+    const debt = 7060 - i * 12 + Math.round(40 * Math.sin(i * 1.3))
+    const cash = 10350 + i * 90 + Math.round(80 * Math.sin(i * 0.6))
+    const netWorth = assets - debt // exact: integers only
+    return {
+      id: `snapshot_${date.replace(/-/g, '_')}`,
+      date,
+      netWorth,
+      assets,
+      debt,
+      cash,
+    }
+  })
+}
+
 function db() {
   if (database) return database
   fs.mkdirSync(config.dataDir, { recursive: true })
@@ -222,19 +262,43 @@ function migrate(con) {
   con.prepare("UPDATE documents SET status='needed' WHERE status='missing'").run()
   con.prepare("UPDATE documents SET status='verified' WHERE status='ready'").run()
   con.prepare("UPDATE transactions SET date='2026-07-04' WHERE source='demo_seed_v2' AND date > '2026-07-05' AND date LIKE '2026-07-%'").run()
-  const demoSnapshots = [
-    ['2026-01-31', 20420, 27480, 7060, 10350],
-    ['2026-02-28', 20840, 28020, 7180, 10720],
-    ['2026-03-31', 21290, 28390, 7100, 11120],
-    ['2026-04-30', 21610, 28680, 7070, 11460],
-    ['2026-05-31', 22080, 29030, 6950, 11980],
-    ['2026-06-30', 22420, 29220, 6800, 12410],
-  ]
-  const updateSnapshot = con.prepare(`UPDATE snapshots
-    SET net_worth = ?, assets = ?, debt = ?, cash = ?, updated_at = ?
-    WHERE source = 'demo_history' AND date = ?`)
-  for (const [date, netWorth, assets, debt, cash] of demoSnapshots) {
-    updateSnapshot.run(netWorth, assets, debt, cash, nowIso(), date)
+  // Purge the superseded v1 demo transactions. `demo_seed_v2` is the canonical
+  // demo dataset; the old `demo_seed` rows carry different ids so they never key-
+  // collided and were double-counting into cashflow/category rollups. Runs every
+  // boot and only targets the exact legacy source, so it is idempotent and never
+  // touches demo_seed_v2, real/manual, or Apple CSV import rows.
+  con.prepare("DELETE FROM transactions WHERE source = 'demo_seed'").run()
+
+  // Re-flatten the demo net-worth history to the dense weekly series. Runs on
+  // every startup, idempotent and safe against the existing SQLite file. Demo
+  // rows can NEVER clobber a real snapshot: we only refresh existing demo rows in
+  // place, and only INSERT a demo date when NO row (demo or real) exists for it.
+  // A real server_start/transaction_update/apple_import snapshot on a date that
+  // coincides with a fixed weekly demo date therefore always survives.
+  const weekly = demoWeeklySnapshots()
+  const keepDates = weekly.map((s) => s.date)
+  const keepPlaceholders = keepDates.map(() => '?').join(', ')
+  const nowStamp = nowIso()
+  con.exec('BEGIN')
+  try {
+    // Drop only stale demo history rows (e.g. a prior month-end series) no longer
+    // in the weekly set. `source='demo_history'` guard leaves real rows intact.
+    con.prepare(`DELETE FROM snapshots WHERE source = 'demo_history' AND date NOT IN (${keepPlaceholders})`).run(...keepDates)
+    const refreshDemo = con.prepare(`UPDATE snapshots
+      SET net_worth = ?, assets = ?, debt = ?, cash = ?, updated_at = ?
+      WHERE date = ? AND source = 'demo_history'`)
+    const insertDemoIfAbsent = con.prepare(`INSERT INTO snapshots
+      (id, date, net_worth, assets, debt, cash, source, created_at, updated_at)
+      SELECT ?, ?, ?, ?, ?, ?, 'demo_history', ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM snapshots WHERE date = ?)`)
+    for (const s of weekly) {
+      refreshDemo.run(s.netWorth, s.assets, s.debt, s.cash, nowStamp, s.date)
+      insertDemoIfAbsent.run(s.id, s.date, s.netWorth, s.assets, s.debt, s.cash, nowStamp, nowStamp, s.date)
+    }
+    con.exec('COMMIT')
+  } catch (err) {
+    con.exec('ROLLBACK')
+    throw err
   }
   con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('schema_version', '2')
 }
@@ -453,18 +517,16 @@ function ensureDemoDepth(con) {
     VALUES (?, ?, ?, 'merchant_description', 1, ?, ?)`)
   for (const row of rules) insertRule.run(...row, created, created)
 
-  const snapshots = [
-    ['snapshot_2026_01_31', '2026-01-31', 20420, 27480, 7060, 10350, 'demo_history'],
-    ['snapshot_2026_02_28', '2026-02-28', 20840, 28020, 7180, 10720, 'demo_history'],
-    ['snapshot_2026_03_31', '2026-03-31', 21290, 28390, 7100, 11120, 'demo_history'],
-    ['snapshot_2026_04_30', '2026-04-30', 21610, 28680, 7070, 11460, 'demo_history'],
-    ['snapshot_2026_05_31', '2026-05-31', 22080, 29030, 6950, 11980, 'demo_history'],
-    ['snapshot_2026_06_30', '2026-06-30', 22420, 29220, 6800, 12410, 'demo_history'],
-  ]
-  const insertSnapshot = con.prepare(`INSERT OR REPLACE INTO snapshots
+  // Dense deterministic weekly history (~2026-01-01 -> 2026-07-06). Insert only
+  // when no row already exists for the date, so demo figures never clobber a real
+  // captured snapshot (migrate() already handles the ongoing reflatten).
+  const insertSnapshot = con.prepare(`INSERT INTO snapshots
     (id, date, net_worth, assets, debt, cash, source, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-  for (const row of snapshots) insertSnapshot.run(...row, created, created)
+    SELECT ?, ?, ?, ?, ?, ?, 'demo_history', ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM snapshots WHERE date = ?)`)
+  for (const s of demoWeeklySnapshots()) {
+    insertSnapshot.run(s.id, s.date, s.netWorth, s.assets, s.debt, s.cash, created, created, s.date)
+  }
 
   con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_v2_seeded', 'true')
 }

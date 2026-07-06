@@ -8,7 +8,7 @@
   --line-soft: #1b242e;
   --text: #edf5f2;
   --muted: #91a09b;
-  --faint: #65726f;
+  --faint: #6f7d79;
   --green: #3ddc97;
   --green-soft: rgba(61, 220, 151, 0.12);
   --violet: #a78bfa;
@@ -20,7 +20,7 @@
   --radius: 8px;
   --radius-sm: 6px;
   --rail: 220px;
-  --focus: 0 0 0 3px rgba(61, 220, 151, 0.22);
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--green);
 }
 
 * {
@@ -440,7 +440,8 @@ h3 {
   font-size: 24px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .metric-card small {
@@ -485,6 +486,29 @@ h3 {
   line-height: 1.15;
 }
 
+/* The topbar already renders the eyebrow (#viewEyebrow) + title for every view.
+   Hide the per-section eyebrow so it isn't duplicated mid-page. (The h2 is
+   already .sr-only in markup but kept for aria-labelledby.) */
+.section-head .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A section head whose title block is fully hidden and that carries no toolbar
+   controls would otherwise leave an orphan divider bar — collapse it. */
+.section-head:not(:has(.toolbar)):not(:has(button)):not(:has(select)) {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .row-stack {
   display: grid;
   gap: 8px;
@@ -508,7 +532,21 @@ h3 {
   color: var(--text);
   font-size: 14px;
   line-height: 1.25;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* Keep the title column shrinkable so a wide amount + pill on the same row
+   (e.g. Budget Pulse "$14 left" / "on track") can never squeeze the title to
+   sub-word width and split a word onto a lone dangling letter. */
+.list-row > div:first-child {
+  min-width: 0;
+}
+
+.list-row strong {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .list-row p,
@@ -585,7 +623,7 @@ h3 {
 
 .donut-layout {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: 104px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
 }
@@ -599,10 +637,24 @@ h3 {
 .legend-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   color: var(--muted);
   font-size: 12px;
+}
+
+.legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-row strong {
+  padding-left: 6px;
+  color: var(--text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .legend-dot {
@@ -879,6 +931,14 @@ label {
 @keyframes shimmer {
   to {
     background-position-x: -220%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton:empty,
+  .skeleton .skeleton-line {
+    animation: none;
+    background-position-x: 0;
   }
 }
 

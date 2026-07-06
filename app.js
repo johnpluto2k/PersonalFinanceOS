@@ -71,6 +71,11 @@ function safeColor(value, fallback = '#3ddc97') {
   return /^#[0-9a-f]{3,8}$/i.test(String(value || '')) ? String(value) : fallback
 }
 
+function cssVar(name, fallback = '') {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
 function fmtAmount(amount) {
   const n = Number(amount || 0)
   return n < 0 ? `+${fmtMoney(Math.abs(n), true)}` : fmtMoney(n, true)
@@ -198,35 +203,50 @@ function lineChart(points) {
   const width = 760
   const height = 220
   const pad = 24
+  const green = cssVar('--green', '#3ddc97')
+  const areaFill = cssVar('--green-soft', 'rgba(61, 220, 151, 0.12)')
+  const gridColor = cssVar('--line-soft', '#1b242e')
+  const axisColor = cssVar('--faint', '#65726f')
   const values = points.map((p) => Number(p.netWorth || 0))
   const min = Math.min(...values)
   const max = Math.max(...values)
-  const span = Math.max(1, max - min)
-  const xStep = points.length > 1 ? (width - pad * 2) / (points.length - 1) : 0
+  // Degenerate series: an all-equal series draws a flat baseline centered
+  // vertically; a lone point is centered horizontally rather than pinned to x=pad.
+  const flat = max === min
+  const span = flat ? 1 : max - min
+  const single = points.length === 1
+  const midY = height / 2
+  const xStep = single ? 0 : (width - pad * 2) / (points.length - 1)
   const coords = points.map((point, index) => {
-    const x = pad + index * xStep
-    const y = height - pad - ((Number(point.netWorth || 0) - min) / span) * (height - pad * 2)
+    const x = single ? width / 2 : pad + index * xStep
+    const y = flat ? midY : height - pad - ((Number(point.netWorth || 0) - min) / span) * (height - pad * 2)
     return { x, y, point }
   })
-  const path = coords.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
-  const area = `${path} L${coords.at(-1).x.toFixed(1)} ${height - pad} L${coords[0].x.toFixed(1)} ${height - pad} Z`
+  // For a single point draw a short flat baseline so the chart never renders as a bare dot.
+  const line = single
+    ? `M${pad} ${midY.toFixed(1)} L${(width - pad).toFixed(1)} ${midY.toFixed(1)}`
+    : coords.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
+  const areaLeft = single ? pad : coords[0].x
+  const areaRight = single ? width - pad : coords.at(-1).x
+  const baselineY = single ? midY : height - pad
+  const area = `${line} L${areaRight.toFixed(1)} ${baselineY.toFixed(1)} L${areaLeft.toFixed(1)} ${baselineY.toFixed(1)} Z`
   const grid = [0.25, 0.5, 0.75].map((t) => {
     const y = pad + t * (height - pad * 2)
-    return `<line x1="${pad}" y1="${y}" x2="${width - pad}" y2="${y}" stroke="#1b242e" />`
+    return `<line x1="${pad}" y1="${y}" x2="${width - pad}" y2="${y}" stroke="${gridColor}" />`
   }).join('')
   const dots = coords.map((p) => `
-    <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="#3ddc97">
+    <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="${green}">
       <title>${escapeHtml(`${p.point.date}: ${fmtMoney(p.point.netWorth)}`)}</title>
     </circle>
   `).join('')
   return `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Net worth history">
       ${grid}
-      <path d="${area}" fill="rgba(61, 220, 151, 0.10)" stroke="none"></path>
-      <path d="${path}" fill="none" stroke="#3ddc97" stroke-width="3"></path>
+      <path d="${area}" fill="${areaFill}" stroke="none"></path>
+      <path d="${line}" fill="none" stroke="${green}" stroke-width="3"></path>
       ${dots}
-      <text x="${pad}" y="${height - 7}" fill="#65726f" font-size="12">${escapeHtml(points[0].date)}</text>
-      <text x="${width - pad}" y="${height - 7}" fill="#65726f" font-size="12" text-anchor="end">${escapeHtml(points.at(-1).date)}</text>
+      <text x="${pad}" y="${height - 7}" fill="${axisColor}" font-size="12">${escapeHtml(points[0].date)}</text>
+      <text x="${width - pad}" y="${height - 7}" fill="${axisColor}" font-size="12" text-anchor="end">${escapeHtml(points.at(-1).date)}</text>
     </svg>
   `
 }
@@ -237,6 +257,11 @@ function cashflowBars(months) {
   const width = 760
   const height = 360
   const pad = 34
+  const green = cssVar('--green', '#3ddc97')
+  const violet = cssVar('--violet', '#a78bfa')
+  const axisColor = cssVar('--faint', '#6f7d79')
+  const legendColor = cssVar('--muted', '#91a09b')
+  const gridColor = cssVar('--line', '#25303b')
   const max = Math.max(...data.flatMap((m) => [Number(m.income || 0), Number(m.spending || 0)]), 1)
   const group = (width - pad * 2) / data.length
   const barWidth = Math.min(28, group / 3)
@@ -245,23 +270,23 @@ function cashflowBars(months) {
     const incomeH = (Number(month.income || 0) / max) * (height - pad * 2)
     const spendH = (Number(month.spending || 0) / max) * (height - pad * 2)
     return `
-      <rect x="${x - barWidth - 2}" y="${height - pad - incomeH}" width="${barWidth}" height="${incomeH}" rx="4" fill="#3ddc97">
+      <rect x="${x - barWidth - 2}" y="${height - pad - incomeH}" width="${barWidth}" height="${incomeH}" rx="4" fill="${green}">
         <title>${escapeHtml(`${month.month} income ${fmtMoney(month.income)}`)}</title>
       </rect>
-      <rect x="${x + 2}" y="${height - pad - spendH}" width="${barWidth}" height="${spendH}" rx="4" fill="#a78bfa">
+      <rect x="${x + 2}" y="${height - pad - spendH}" width="${barWidth}" height="${spendH}" rx="4" fill="${violet}">
         <title>${escapeHtml(`${month.month} spend ${fmtMoney(month.spending)}`)}</title>
       </rect>
-      <text x="${x}" y="${height - 10}" fill="#65726f" font-size="11" text-anchor="middle">${escapeHtml(month.month.slice(5))}</text>
+      <text x="${x}" y="${height - 10}" fill="${axisColor}" font-size="11" text-anchor="middle">${escapeHtml(month.month.slice(5))}</text>
     `
   }).join('')
   return `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Monthly cashflow">
-      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#25303b" />
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="${gridColor}" />
       ${bars}
-      <text x="${pad}" y="20" fill="#91a09b" font-size="12">Income</text>
-      <circle cx="${pad + 53}" cy="16" r="5" fill="#3ddc97" />
-      <text x="${pad + 72}" y="20" fill="#91a09b" font-size="12">Spend</text>
-      <circle cx="${pad + 118}" cy="16" r="5" fill="#a78bfa" />
+      <text x="${pad}" y="20" fill="${legendColor}" font-size="12">Income</text>
+      <circle cx="${pad + 53}" cy="16" r="5" fill="${green}" />
+      <text x="${pad + 72}" y="20" fill="${legendColor}" font-size="12">Spend</text>
+      <circle cx="${pad + 118}" cy="16" r="5" fill="${violet}" />
     </svg>
   `
 }
@@ -290,17 +315,20 @@ function donutChart(items) {
   const legend = data.map((item, index) => `
     <div class="legend-row">
       <span class="legend-dot" style="background:${chartColors[index % chartColors.length]}"></span>
-      <span>${escapeHtml(item.category)}</span>
+      <span class="legend-label">${escapeHtml(item.category)}</span>
       <strong>${escapeHtml(fmtMoney(item.total))}</strong>
     </div>
   `).join('')
+  const trackColor = cssVar('--surface-3', '#151d27')
+  const centerColor = cssVar('--text', '#edf5f2')
+  const labelColor = cssVar('--muted', '#91a09b')
   return `
     <div class="donut-layout">
       <svg viewBox="0 0 150 150" role="img" aria-label="Spending by category">
-        <circle r="${radius}" cx="75" cy="75" fill="none" stroke="#151d27" stroke-width="18"></circle>
+        <circle r="${radius}" cx="75" cy="75" fill="none" stroke="${trackColor}" stroke-width="18"></circle>
         ${circles}
-        <text x="75" y="71" text-anchor="middle" fill="#edf5f2" font-size="18" font-weight="800">${escapeHtml(fmtMoney(total))}</text>
-        <text x="75" y="91" text-anchor="middle" fill="#91a09b" font-size="11">spend</text>
+        <text x="75" y="71" text-anchor="middle" fill="${centerColor}" font-size="18" font-weight="800">${escapeHtml(fmtMoney(total))}</text>
+        <text x="75" y="91" text-anchor="middle" fill="${labelColor}" font-size="11">spend</text>
       </svg>
       <div class="legend">${legend}</div>
     </div>

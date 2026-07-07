@@ -23,6 +23,7 @@ const state = {
   documentYear: null,
   taxYear: null,
   pendingDeleteBudget: null,
+  pendingDeleteRule: null,
 }
 
 const viewMeta = {
@@ -181,9 +182,9 @@ function listRow({ title, detail, right, chip, tone = '' }) {
   `
 }
 
-function financeCard({ title, meta, value, body, chip, tone = '', accent = '#3ddc97', extra = '' }) {
+function financeCard({ title, meta, value, body, chip, tone = '', accent = '#3ddc97', extra = '', className = '' }) {
   return `
-    <article class="finance-card" style="border-top: 3px solid ${safeColor(accent)}">
+    <article class="finance-card${className ? ` ${className}` : ''}" style="border-top: 3px solid ${safeColor(accent)}">
       <div class="finance-card-top">
         <div>
           <span class="label">${escapeHtml(meta || '')}</span>
@@ -537,9 +538,19 @@ function renderCashflow() {
 
 function renderSubscriptions() {
   const target = $('subscriptionGrid')
+  const summary = $('subscriptionSummary')
   if (!state.subscriptions.length) {
+    if (summary) summary.innerHTML = ''
     target.innerHTML = emptyState('No recurring charges detected.')
     return
+  }
+  if (summary) {
+    const total = state.subscriptions.reduce((sum, item) => sum + Number(item.monthlyCost || 0), 0)
+    summary.innerHTML = `
+      <span class="label">Est. monthly</span>
+      <strong>${escapeHtml(fmtMoney(total, true))}</strong>
+      <span class="chip">${state.subscriptions.length} recurring</span>
+    `
   }
   target.innerHTML = state.subscriptions.map((item) => financeCard({
     title: item.merchant,
@@ -672,14 +683,23 @@ function renderAutomation() {
     target.innerHTML = emptyState('No rules yet.')
     return
   }
-  target.innerHTML = state.rules.map((rule) => financeCard({
-    title: rule.pattern,
-    meta: rule.target,
-    chip: rule.enabled ? 'enabled' : 'off',
-    tone: rule.enabled ? 'good' : '',
-    accent: rule.enabled ? '#3ddc97' : '#65726f',
-    body: `Category: ${rule.category}`,
-  })).join('')
+  target.innerHTML = state.rules.map((rule) => {
+    const arming = state.pendingDeleteRule === rule.id
+    const actions = `<div class="card-actions">
+      <button class="ghost-button rule-toggle" data-id="${escapeHtml(rule.id)}">${rule.enabled ? 'Disable' : 'Enable'}</button>
+      <button class="ghost-button danger rule-delete${arming ? ' is-arming' : ''}" data-id="${escapeHtml(rule.id)}">${arming ? 'Confirm delete' : 'Delete'}</button>
+    </div>`
+    return financeCard({
+      title: rule.pattern,
+      meta: rule.target,
+      chip: rule.enabled ? 'enabled' : 'off',
+      tone: rule.enabled ? 'good' : '',
+      accent: rule.enabled ? '#3ddc97' : '#65726f',
+      body: `Category: ${rule.category}`,
+      className: rule.enabled ? '' : 'is-disabled',
+      extra: actions,
+    })
+  }).join('')
 }
 
 function renderConnections() {
@@ -874,6 +894,41 @@ function bindEvents() {
       try {
         await del(`/api/budgets/${encodeURIComponent(id)}`)
         toast('Budget deleted.')
+        await load({ quiet: true })
+      } catch (err) {
+        toast(err.message, 'error')
+      }
+      return
+    }
+
+    const ruleToggle = event.target.closest('.rule-toggle')
+    if (ruleToggle) {
+      state.pendingDeleteRule = null
+      const rule = state.rules.find((r) => r.id === ruleToggle.dataset.id)
+      if (rule) {
+        try {
+          await patch(`/api/rules/${encodeURIComponent(rule.id)}`, { enabled: !rule.enabled })
+          toast(rule.enabled ? 'Rule disabled.' : 'Rule enabled.')
+          await load({ quiet: true })
+        } catch (err) {
+          toast(err.message, 'error')
+        }
+      }
+      return
+    }
+
+    const ruleDelete = event.target.closest('.rule-delete')
+    if (ruleDelete) {
+      const id = ruleDelete.dataset.id
+      if (state.pendingDeleteRule !== id) {
+        state.pendingDeleteRule = id
+        renderAutomation()
+        return
+      }
+      state.pendingDeleteRule = null
+      try {
+        await del(`/api/rules/${encodeURIComponent(id)}`)
+        toast('Rule deleted.')
         await load({ quiet: true })
       } catch (err) {
         toast(err.message, 'error')

@@ -837,6 +837,27 @@ label {
   margin-top: 12px;
 }
 
+.finance-card.is-disabled {
+  opacity: 0.55;
+}
+
+.sub-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sub-summary .label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sub-summary strong {
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .ghost-button {
   padding: 6px 12px;
   min-height: 24px;

@@ -255,6 +255,16 @@ function migrate(con) {
     CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
   `)
 
+  // Rules dedup maintenance. ORDERING IS CRITICAL: collapse duplicate patterns
+  // FIRST, then create the UNIQUE guard index. The current live DB may hold
+  // duplicate `pattern` rows (e.g. the 7 legacy `qa test cafe` rows); creating a
+  // bare UNIQUE INDEX against those would throw and brick startup, so the index
+  // must NOT live in the DDL exec above. The DELETE keeps the oldest (lowest
+  // rowid) row per pattern and is idempotent — after the first boot there is
+  // nothing left to collapse.
+  con.exec('DELETE FROM rules WHERE rowid NOT IN (SELECT MIN(rowid) FROM rules GROUP BY pattern)')
+  con.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_pattern ON rules(pattern)')
+
   const created = con.prepare("SELECT value FROM meta WHERE key='created_at'").get()
   if (!created) {
     con.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('created_at', nowIso())
@@ -1091,8 +1101,33 @@ export function createRule(body = {}) {
     updatedAt: now,
   }
   con.prepare(`INSERT INTO rules (id, pattern, category, target, enabled, created_at, updated_at)
-    VALUES (@id, @pattern, @category, @target, @enabled, @createdAt, @updatedAt)`).run(rule)
-  return listRules().find((item) => item.id === rule.id)
+    VALUES (@id, @pattern, @category, @target, @enabled, @createdAt, @updatedAt)
+    ON CONFLICT(pattern) DO UPDATE SET category=excluded.category, target=excluded.target,
+      enabled=excluded.enabled, updated_at=excluded.updated_at`).run(rule)
+  // On conflict the surviving row keeps its ORIGINAL id, so look up by pattern
+  // (the dedup key) rather than by rule.id, which would be absent after an update.
+  return listRules().find((item) => item.pattern === pattern)
+}
+
+export function deleteRule(id) {
+  const result = db().prepare('DELETE FROM rules WHERE id = ?').run(id)
+  if (!result.changes) {
+    const err = new Error('rule not found')
+    err.status = 404
+    throw err
+  }
+  return { deleted: true }
+}
+
+export function setRuleEnabled(id, enabled) {
+  const result = db().prepare('UPDATE rules SET enabled = ?, updated_at = ? WHERE id = ?')
+    .run(enabled ? 1 : 0, nowIso(), id)
+  if (!result.changes) {
+    const err = new Error('rule not found')
+    err.status = 404
+    throw err
+  }
+  return listRules().find((item) => item.id === id)
 }
 
 export function runRules({ includeReviewed = false } = {}) {

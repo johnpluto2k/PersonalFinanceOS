@@ -45,7 +45,9 @@ http://127.0.0.1:8787/
 | `PATCH` | `/api/budgets/:id` | Update a budget |
 | `DELETE` | `/api/budgets/:id` | Delete a budget |
 | `GET` | `/api/rules` | Merchant/description categorization rules |
-| `POST` | `/api/rules` | Create a categorization rule |
+| `POST` | `/api/rules` | Create or upsert a categorization rule (deduped by pattern) |
+| `PATCH` | `/api/rules/:id` | Enable or disable a rule |
+| `DELETE` | `/api/rules/:id` | Delete a rule |
 | `POST` | `/api/rules/run` | Apply enabled rules retroactively |
 | `GET` | `/api/subscriptions` | Recurring transaction detection |
 | `GET` | `/api/categories` | Known categories from defaults, budgets, and transactions |

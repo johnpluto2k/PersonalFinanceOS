@@ -12,6 +12,7 @@ import {
   createBudget,
   createRule,
   deleteBudget,
+  deleteRule,
   listCashflow,
   listBudgets,
   listCategories,
@@ -23,6 +24,7 @@ import {
   listTransactions,
   readDb,
   runRules,
+  setRuleEnabled,
   summary,
   transactionsCsv,
   updateBudget,
@@ -202,6 +204,17 @@ async function handle(req, res) {
       const body = await readJson(req)
       const rule = createRule(body)
       return send(res, 201, rule)
+    }
+
+    const ruleMatch = url.pathname.match(/^\/api\/rules\/([^/]+)$/)
+    if (ruleMatch && url.pathname !== '/api/rules/run' && req.method === 'DELETE') {
+      return send(res, 200, deleteRule(decodeURIComponent(ruleMatch[1])))
+    }
+
+    if (ruleMatch && url.pathname !== '/api/rules/run' && req.method === 'PATCH') {
+      const body = await readJson(req)
+      const rule = setRuleEnabled(decodeURIComponent(ruleMatch[1]), body.enabled)
+      return send(res, 200, rule)
     }
 
     if (req.method === 'POST' && url.pathname === '/api/rules/run') {

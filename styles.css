@@ -827,6 +827,37 @@ label {
   transform-origin: left center;
 }
 
+.progress-fill.is-under { background: var(--green); }
+.progress-fill.is-near { background: var(--amber); }
+.progress-fill.is-over { background: var(--red); }
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ghost-button {
+  padding: 6px 12px;
+  min-height: 24px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.ghost-button:hover { background: var(--surface-2); }
+.ghost-button.danger { color: var(--red); }
+.ghost-button.danger.is-arming {
+  background: var(--red);
+  color: #0a0a0b;
+  border-color: var(--red);
+}
+
 .merchant-list {
   display: flex;
   flex-wrap: wrap;

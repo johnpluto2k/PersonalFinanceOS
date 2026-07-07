@@ -22,6 +22,7 @@ const state = {
   txSort: { key: 'date', dir: 'desc' },
   documentYear: null,
   taxYear: null,
+  pendingDeleteBudget: null,
 }
 
 const viewMeta = {
@@ -148,6 +149,10 @@ function patch(path, body = {}) {
   return request(path, { method: 'PATCH', body: JSON.stringify(body) })
 }
 
+function del(path) {
+  return request(path, { method: 'DELETE' })
+}
+
 function toast(message, tone = 'info') {
   const stack = $('toastStack')
   const item = document.createElement('div')
@@ -193,9 +198,21 @@ function financeCard({ title, meta, value, body, chip, tone = '', accent = '#3dd
   `
 }
 
-function progressBar(percent, color = '#3ddc97') {
+function budgetState(percent) {
+  const p = Number(percent || 0)
+  if (p > 100) return 'over'
+  if (p >= 80) return 'near'
+  return 'under'
+}
+
+function progressBar(percent, options = {}) {
+  // Back-compat: a bare string is treated as a fixed fill color (documents view).
+  const { state = '', color = '', label = 'Progress' } = typeof options === 'string' ? { color: options } : options
+  const value = Math.round(Number(percent || 0))
   const width = Math.max(0, Math.min(100, Number(percent || 0)))
-  return `<div class="progress-track"><span class="progress-fill" style="width:${width}%;background:${safeColor(color)}"></span></div>`
+  const styleColor = !state && color ? `;background:${safeColor(color)}` : ''
+  const stateClass = state ? ` is-${state}` : ''
+  return `<div class="progress-track" role="progressbar" aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(label)}"><span class="progress-fill${stateClass}" style="width:${width}%${styleColor}"></span></div>`
 }
 
 function lineChart(points) {
@@ -474,16 +491,21 @@ function renderTransactions() {
 }
 
 function renderBudgets() {
-  const target = $('budgetGrid')
+  const target = clearSkeleton('budgetGrid')
   if (!state.budgets.length) {
     target.innerHTML = emptyState('No budgets yet.')
     return
   }
   target.innerHTML = state.budgets.map((budget) => {
-    const over = budget.remaining < 0
+    const over = budget.remaining != null && budget.remaining < 0
     const merchants = budget.topMerchants?.length
       ? `<div class="merchant-list">${budget.topMerchants.map((m) => `<span class="chip">${escapeHtml(`${m.merchant} ${fmtMoney(m.total)}`)}</span>`).join('')}</div>`
       : ''
+    const arming = state.pendingDeleteBudget === budget.id
+    const actions = `<div class="card-actions">
+      <button class="ghost-button budget-edit" data-id="${escapeHtml(budget.id)}">Edit</button>
+      <button class="ghost-button danger budget-delete${arming ? ' is-arming' : ''}" data-id="${escapeHtml(budget.id)}">${arming ? 'Confirm delete' : 'Delete'}</button>
+    </div>`
     return financeCard({
       title: budget.category,
       meta: budget.month,
@@ -492,7 +514,7 @@ function renderBudgets() {
       tone: over ? 'bad' : budget.percent > 80 ? 'warn' : 'good',
       accent: budget.color,
       body: `${fmtMoney(budget.spent)} of ${fmtMoney(budget.monthlyLimit)} | ${budget.deltaFromPrevious >= 0 ? '+' : ''}${fmtMoney(budget.deltaFromPrevious)} vs prior month`,
-      extra: `${progressBar(budget.percent, budget.color)}${merchants}`,
+      extra: `${progressBar(budget.percent, { state: budgetState(budget.percent), label: `${budget.category} budget usage` })}${merchants}${actions}`,
     })
   }).join('')
 }
@@ -775,6 +797,24 @@ function closeDialogFromButton(button) {
   if (dialog) dialog.close()
 }
 
+function openBudgetDialog(budget) {
+  const form = $('budgetForm')
+  const titleEl = form.querySelector('.dialog-head h2')
+  if (budget) {
+    form.dataset.editId = budget.id
+    if (titleEl) titleEl.textContent = 'Edit budget'
+    form.elements.category.value = budget.category || ''
+    form.elements.monthlyLimit.value = budget.monthlyLimit ?? ''
+    form.elements.color.value = budget.color || '#3ddc97'
+    form.elements.notes.value = budget.notes || ''
+  } else {
+    delete form.dataset.editId
+    if (titleEl) titleEl.textContent = 'Add budget'
+    form.reset()
+  }
+  openDialog('budgetDialog')
+}
+
 function bindEvents() {
   document.addEventListener('click', async (event) => {
     const viewButton = event.target.closest('[data-view]')
@@ -810,8 +850,36 @@ function bindEvents() {
 
     if (event.target.closest('#addAccountBtn')) openDialog('accountDialog')
     if (event.target.closest('#appleImportBtn')) openDialog('appleDialog')
-    if (event.target.closest('#addBudgetBtn')) openDialog('budgetDialog')
+    if (event.target.closest('#addBudgetBtn')) openBudgetDialog(null)
     if (event.target.closest('#addRuleBtn')) openDialog('ruleDialog')
+
+    const budgetEdit = event.target.closest('.budget-edit')
+    if (budgetEdit) {
+      state.pendingDeleteBudget = null
+      const budget = state.budgets.find((b) => b.id === budgetEdit.dataset.id)
+      if (budget) openBudgetDialog(budget)
+      renderBudgets()
+      return
+    }
+
+    const budgetDelete = event.target.closest('.budget-delete')
+    if (budgetDelete) {
+      const id = budgetDelete.dataset.id
+      if (state.pendingDeleteBudget !== id) {
+        state.pendingDeleteBudget = id
+        renderBudgets()
+        return
+      }
+      state.pendingDeleteBudget = null
+      try {
+        await del(`/api/budgets/${encodeURIComponent(id)}`)
+        toast('Budget deleted.')
+        await load({ quiet: true })
+      } catch (err) {
+        toast(err.message, 'error')
+      }
+      return
+    }
 
     if (event.target.closest('#syncBtn')) {
       try {
@@ -913,16 +981,23 @@ function bindEvents() {
     event.preventDefault()
     const formEl = event.currentTarget
     const form = new FormData(formEl)
+    const editId = formEl.dataset.editId
+    const payload = {
+      category: form.get('category'),
+      monthlyLimit: Number(form.get('monthlyLimit') || 0),
+      color: form.get('color'),
+      notes: form.get('notes'),
+    }
     try {
-      await post('/api/budgets', {
-        category: form.get('category'),
-        monthlyLimit: Number(form.get('monthlyLimit') || 0),
-        color: form.get('color'),
-        notes: form.get('notes'),
-      })
+      if (editId) {
+        await patch(`/api/budgets/${encodeURIComponent(editId)}`, payload)
+      } else {
+        await post('/api/budgets', payload)
+      }
+      delete formEl.dataset.editId
       formEl.reset()
       $('budgetDialog').close()
-      toast('Budget saved.')
+      toast(editId ? 'Budget updated.' : 'Budget saved.')
       await load({ quiet: true })
     } catch (err) {
       toast(err.message, 'error')

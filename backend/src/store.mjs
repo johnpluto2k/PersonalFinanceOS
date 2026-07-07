@@ -269,6 +269,23 @@ function migrate(con) {
   // touches demo_seed_v2, real/manual, or Apple CSV import rows.
   con.prepare("DELETE FROM transactions WHERE source = 'demo_seed'").run()
 
+  // One-time reconcile so the EXISTING demo DB surfaces near-cap + over-budget
+  // states (the demo_v2_seeded guard means seed-value edits only affect fresh DBs).
+  // Gated by its own meta flag AND guarded to only touch demo budget rows whose
+  // limit is STILL the original seeded value, so a user-edited budget is never
+  // clobbered. Idempotent: after the flag is set it never runs again, and the
+  // monthly_limit guard prevents any double-apply.
+  const budgetsReconciled = con.prepare("SELECT value FROM meta WHERE key='demo_budgets_v2'").get()
+  if (budgetsReconciled?.value !== 'true') {
+    const reconcileBudget = con.prepare(`UPDATE budgets SET monthly_limit = ?, updated_at = ?
+      WHERE id = ? AND category = ? AND monthly_limit = ?`)
+    const budgetStamp = nowIso()
+    // Subscriptions: 80 -> 40 (spend ~46 => OVER 100%). Transport: 190 -> 100 (spend ~92 => 80-100% watch).
+    reconcileBudget.run(40, budgetStamp, 'budget_subscriptions', 'Subscriptions', 80)
+    reconcileBudget.run(100, budgetStamp, 'budget_transport', 'Transport', 190)
+    con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_budgets_v2', 'true')
+  }
+
   // Re-flatten the demo net-worth history to the dense weekly series. Runs on
   // every startup, idempotent and safe against the existing SQLite file. Demo
   // rows can NEVER clobber a real snapshot: we only refresh existing demo rows in
@@ -490,9 +507,9 @@ function ensureDemoDepth(con) {
   const budgets = [
     ['budget_groceries', 'Groceries', 470, '#3ddc97', 'Weekly grocery target with room for bulk buys.'],
     ['budget_dining', 'Dining', 220, '#a78bfa', 'Coffee, lunch, and restaurants.'],
-    ['budget_transport', 'Transport', 190, '#38bdf8', 'Gas, transit, rideshare.'],
+    ['budget_transport', 'Transport', 100, '#38bdf8', 'Gas, transit, rideshare.'],
     ['budget_shopping', 'Shopping', 260, '#f59e0b', 'Retail and household supplies.'],
-    ['budget_subscriptions', 'Subscriptions', 80, '#ec4899', 'Recurring digital services.'],
+    ['budget_subscriptions', 'Subscriptions', 40, '#ec4899', 'Recurring digital services.'],
     ['budget_education', 'Education', 120, '#f97316', 'Books, courses, supplies.'],
   ]
   const insertBudget = con.prepare(`INSERT OR REPLACE INTO budgets
@@ -974,13 +991,16 @@ export function listBudgets() {
       GROUP BY COALESCE(merchant, description, 'Unknown')
       ORDER BY total DESC LIMIT 4`).all(currentMonth, budget.category)
     const spent = Number(current.total || 0)
+    // A monthly_limit <= 0 means "no cap": it must never read as over-budget.
+    // remaining=null (unlimited, not negative) and percent=0 keep the display honest.
+    const hasCap = budget.monthlyLimit > 0
     return {
       ...budget,
       month: currentMonth,
       spent,
       transactionCount: Number(current.count || 0),
-      remaining: budget.monthlyLimit - spent,
-      percent: budget.monthlyLimit > 0 ? Math.min(999, Math.round((spent / budget.monthlyLimit) * 100)) : 0,
+      remaining: hasCap ? budget.monthlyLimit - spent : null,
+      percent: hasCap ? Math.min(999, Math.round((spent / budget.monthlyLimit) * 100)) : 0,
       deltaFromPrevious: spent - Number(previous.total || 0),
       topMerchants: merchants.map((merchant) => ({
         merchant: merchant.merchant,
@@ -1210,7 +1230,9 @@ export function actionQueue() {
   }
 
   for (const budget of listBudgets()) {
-    if (budget.remaining < 0) {
+    // Only capped budgets (monthlyLimit > 0) can be over budget; a no-cap budget
+    // has remaining=null and must never spam the action queue.
+    if (budget.monthlyLimit > 0 && budget.remaining < 0) {
       actions.push({
         id: `budget_${budget.id}`,
         type: 'budget',

@@ -24,7 +24,11 @@ const state = {
   taxYear: null,
   pendingDeleteBudget: null,
   pendingDeleteRule: null,
+  pendingUnlinkConnection: null,
+  plaidLinking: false,
 }
+
+const checkSvg = '<svg viewBox="0 0 24 24"><path d="m5 13 4 4 10-11" /></svg>'
 
 const viewMeta = {
   overview: ['Personal CFO', 'Overview'],
@@ -89,6 +93,22 @@ function amountClass(amount) {
 
 function accountKind(kind) {
   return String(kind || 'other').replace(/_/g, ' ')
+}
+
+function humanizeTime(value) {
+  if (!value) return 'never'
+  const then = new Date(value)
+  if (Number.isNaN(then.getTime())) return String(value)
+  const diff = Date.now() - then.getTime()
+  const mins = Math.round(Math.abs(diff) / 60000)
+  const suffix = diff < 0 ? 'from now' : 'ago'
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ${suffix}`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ${suffix}`
+  const days = Math.round(hrs / 24)
+  if (days < 30) return `${days}d ${suffix}`
+  return then.toISOString().slice(0, 10)
 }
 
 function clearSkeleton(id) {
@@ -702,22 +722,103 @@ function renderAutomation() {
   }).join('')
 }
 
+function onboardingStep(index, done, title, doneText, todoText) {
+  return `
+    <li class="onboard-step${done ? ' is-done' : ''}">
+      <span class="onboard-mark" aria-hidden="true">${done ? checkSvg : String(index)}</span>
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(done ? doneText : todoText)}</p>
+      </div>
+    </li>
+  `
+}
+
+function renderOnboarding() {
+  const target = $('onboardingCard')
+  if (!target) return
+  const vaultOk = !!state.health?.masterKeyConfigured
+  const plaidOk = !!state.health?.plaidConfigured
+  const bankOk = state.connections.length > 0
+  const done = [vaultOk, plaidOk, bankOk].filter(Boolean).length
+  if (done === 3) {
+    target.hidden = true
+    target.innerHTML = ''
+    return
+  }
+  target.hidden = false
+  const cta = plaidOk
+    ? `<button class="primary-button connect-trigger" id="onboardConnectBtn">
+        <svg viewBox="0 0 24 24"><path d="M3 10h18M6 6h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" /><path d="M15 15h2" /></svg>
+        <span>Connect a bank</span>
+      </button>`
+    : `<p class="onboard-hint">Bank linking unlocks once Plaid keys are set on the server.</p>`
+  target.innerHTML = `
+    <div class="onboard-head">
+      <div><span class="label">First run</span><h3>Connect your first bank</h3></div>
+      <span class="chip ${done === 2 ? 'warn' : 'bad'}">${done}/3 done</span>
+    </div>
+    <ol class="onboard-steps">
+      ${onboardingStep(1, vaultOk, 'Secure vault',
+        'Vault key is set — linked data is encrypted at rest.',
+        'Ask your admin to set a master key on the server so linked data is encrypted.')}
+      ${onboardingStep(2, plaidOk, 'Bank provider keys',
+        'Plaid is configured and ready to link.',
+        'Add Plaid API keys on the server to turn on secure bank linking.')}
+      ${onboardingStep(3, bankOk, 'Connect a bank',
+        'At least one bank is linked. You are all set.',
+        'Use the Connect a bank button to securely link an institution.')}
+    </ol>
+    ${cta}
+  `
+}
+
+function connectionRow(conn) {
+  const id = conn.id
+  const arming = state.pendingUnlinkConnection === id
+  const status = String(conn.status || 'unknown')
+  const tone = status === 'active' ? 'good' : status === 'error' ? 'bad' : 'warn'
+  const synced = conn.lastSyncedAt ? `Synced ${humanizeTime(conn.lastSyncedAt)}` : 'Not synced yet'
+  const provider = conn.provider || 'provider'
+  const errorChip = conn.lastError
+    ? `<span class="chip bad conn-error" title="${escapeHtml(conn.lastError)}">${escapeHtml(conn.lastError)}</span>`
+    : ''
+  return `
+    <div class="conn-row">
+      <div class="conn-main">
+        <div class="conn-head">
+          <strong>${escapeHtml(conn.displayName || provider)}</strong>
+          <span class="chip ${tone}">${escapeHtml(status)}</span>
+        </div>
+        <p>${escapeHtml(`${provider} | ${synced}`)}</p>
+        ${errorChip}
+      </div>
+      <div class="card-actions conn-actions">
+        <button class="ghost-button conn-sync" data-id="${escapeHtml(id)}">Sync</button>
+        <button class="ghost-button danger conn-unlink${arming ? ' is-arming' : ''}" data-id="${escapeHtml(id)}">${arming ? 'Confirm unlink' : 'Unlink'}</button>
+      </div>
+    </div>
+  `
+}
+
 function renderConnections() {
+  renderOnboarding()
   const list = clearSkeleton('connectionList')
   if (!state.connections.length) {
-    list.innerHTML = listRow({
-      title: 'No linked providers',
-      detail: 'Manual accounts and imports are active.',
-      chip: state.health?.masterKeyConfigured ? 'vault ready' : 'needs key',
-      tone: state.health?.masterKeyConfigured ? 'good' : 'warn',
-    })
+    list.innerHTML = `
+      <div class="empty-state connect-empty">
+        <div>
+          <strong>No banks linked yet</strong>
+          <p>Link an institution to pull balances and transactions automatically.</p>
+        </div>
+        <button class="primary-button connect-trigger" id="connectBankEmptyBtn">
+          <svg viewBox="0 0 24 24"><path d="M3 10h18M6 6h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" /><path d="M15 15h2" /></svg>
+          <span>Connect a bank</span>
+        </button>
+      </div>
+    `
   } else {
-    list.innerHTML = state.connections.map((conn) => listRow({
-      title: conn.displayName,
-      detail: `${conn.provider} | ${conn.status}`,
-      chip: conn.hasCursor ? 'cursor' : 'new',
-      tone: conn.status === 'active' ? 'good' : 'warn',
-    })).join('')
+    list.innerHTML = state.connections.map(connectionRow).join('')
   }
 
   const provider = clearSkeleton('providerPanel')
@@ -741,6 +842,59 @@ function renderConnections() {
       tone: 'good',
     }),
   ].join('')
+}
+
+function setConnectBusy(busy) {
+  state.plaidLinking = busy
+  document.querySelectorAll('.connect-trigger').forEach((button) => {
+    button.disabled = busy
+  })
+}
+
+async function connectBank() {
+  if (state.plaidLinking) return
+  if (!state.health?.plaidConfigured) {
+    toast('Bank linking is off until Plaid keys are set on the server.', 'error')
+    return
+  }
+  if (!window.Plaid || typeof window.Plaid.create !== 'function') {
+    toast('Plaid Link could not load. Check your connection and try again.', 'error')
+    return
+  }
+  setConnectBusy(true)
+  try {
+    const { link_token: linkToken } = await post('/api/providers/plaid/link-token', {})
+    if (!linkToken) throw new Error('No link token returned by the server.')
+    const handler = window.Plaid.create({
+      token: linkToken,
+      onSuccess: async (publicToken, metadata) => {
+        try {
+          await post('/api/providers/plaid/exchange-public-token', { public_token: publicToken, metadata })
+          toast('Bank linked. Pulling in your accounts…')
+          try {
+            await post('/api/sync', {})
+          } catch (syncErr) {
+            toast(`Linked, but the first sync failed: ${syncErr.message}`, 'error')
+          }
+          await load({ quiet: true })
+        } catch (err) {
+          toast(err.message, 'error')
+        } finally {
+          setConnectBusy(false)
+        }
+      },
+      onExit: (err) => {
+        if (err) {
+          toast(`Bank linking stopped: ${err.display_message || err.error_message || 'exited early'}`, 'error')
+        }
+        setConnectBusy(false)
+      },
+    })
+    handler.open()
+  } catch (err) {
+    toast(err.message, 'error')
+    setConnectBusy(false)
+  }
 }
 
 function renderVaultState() {
@@ -936,10 +1090,54 @@ function bindEvents() {
       return
     }
 
+    if (event.target.closest('.connect-trigger')) {
+      await connectBank()
+      return
+    }
+
+    const connSync = event.target.closest('.conn-sync')
+    if (connSync) {
+      state.pendingUnlinkConnection = null
+      connSync.disabled = true
+      try {
+        const res = await post('/api/sync', { connectionId: connSync.dataset.id })
+        const failed = res.results?.filter((r) => r.ok === false)
+        if (failed?.length) toast(failed[0].error || 'Sync failed.', 'error')
+        else toast('Sync completed.')
+        await load({ quiet: true })
+      } catch (err) {
+        toast(err.message, 'error')
+        connSync.disabled = false
+      }
+      return
+    }
+
+    const connUnlink = event.target.closest('.conn-unlink')
+    if (connUnlink) {
+      const id = connUnlink.dataset.id
+      if (state.pendingUnlinkConnection !== id) {
+        state.pendingUnlinkConnection = id
+        renderConnections()
+        return
+      }
+      state.pendingUnlinkConnection = null
+      try {
+        await del(`/api/connections/${encodeURIComponent(id)}`)
+        toast('Bank unlinked.')
+        await load({ quiet: true })
+      } catch (err) {
+        toast(err.message, 'error')
+      }
+      return
+    }
+
     if (event.target.closest('#syncBtn')) {
       try {
         const res = await post('/api/sync', {})
-        toast(res.results?.length ? 'Sync completed.' : 'No linked providers to sync.')
+        const failed = res.results?.filter((r) => r.ok === false)
+        if (!res.results?.length) toast('No linked providers to sync.')
+        else if (failed?.length) toast(failed[0].error || 'Sync failed.', 'error')
+        else toast('Sync completed.')
         await load({ quiet: true })
       } catch (err) {
         toast(err.message, 'error')

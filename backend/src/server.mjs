@@ -12,6 +12,7 @@ import {
   createBudget,
   createRule,
   deleteBudget,
+  deleteConnection,
   deleteRule,
   listCashflow,
   listBudgets,
@@ -42,12 +43,33 @@ const STATIC_FILES = new Map([
   ['/app.js', 'app.js'],
 ])
 
+// This server also serves its own frontend, so real requests are same-origin and
+// carry no Origin header — those need no ACAO at all. We only emit ACAO for a
+// cross-origin XHR whose Origin is a local loopback on THIS server's port; any
+// other site (which could otherwise read bank data or trigger DELETE/sync against
+// 127.0.0.1) is refused a permissive header. A wildcard '*' is never sent.
+function allowedOrigin(origin) {
+  if (!origin) return null
+  const allow = new Set([`http://127.0.0.1:${config.port}`, `http://localhost:${config.port}`])
+  return allow.has(origin) ? origin : null
+}
+
+function corsHeaders(res) {
+  const headers = {
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  }
+  if (res.__acao) {
+    headers['Access-Control-Allow-Origin'] = res.__acao
+    headers.Vary = 'Origin'
+  }
+  return headers
+}
+
 function send(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    ...corsHeaders(res),
   })
   res.end(JSON.stringify(body, null, 2))
 }
@@ -55,9 +77,7 @@ function send(res, status, body) {
 function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') {
   res.writeHead(status, {
     'Content-Type': contentType,
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    ...corsHeaders(res),
   })
   res.end(body)
 }
@@ -94,6 +114,8 @@ function publicConnection(connection) {
     status: connection.status,
     updatedAt: connection.updatedAt,
     hasCursor: Boolean(connection.cursor),
+    lastSyncedAt: connection.lastSyncAt || null,
+    lastError: connection.lastError || null,
   }
 }
 
@@ -115,6 +137,7 @@ function addManualAccount(body) {
 }
 
 async function handle(req, res) {
+  res.__acao = allowedOrigin(req.headers.origin)
   if (req.method === 'OPTIONS') return send(res, 200, { ok: true })
   const url = new URL(req.url, `http://${req.headers.host}`)
 
@@ -142,6 +165,13 @@ async function handle(req, res) {
     if (req.method === 'GET' && url.pathname === '/api/connections') {
       const db = readDb()
       return send(res, 200, db.connections.map(publicConnection))
+    }
+
+    const connectionMatch = url.pathname.match(/^\/api\/connections\/([^/]+)$/)
+    if (connectionMatch && req.method === 'DELETE') {
+      const result = deleteConnection(decodeURIComponent(connectionMatch[1]))
+      captureSnapshot('connection_unlink')
+      return send(res, 200, result)
     }
 
     if (req.method === 'GET' && url.pathname === '/api/transactions') {
@@ -294,16 +324,46 @@ async function handle(req, res) {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/sync') {
+      const body = await readJson(req)
+      const targetId = body.connectionId ? String(body.connectionId) : null
       const db = readDb()
+      // A caller-supplied connectionId must resolve to a real, syncable connection.
+      // Silently returning {results:[]} would mask a bad id or a disabled connection.
+      if (targetId) {
+        const conn = db.connections.find((c) => c.id === targetId)
+        if (!conn) {
+          const err = new Error('connection not found')
+          err.status = 404
+          throw err
+        }
+        if (conn.provider !== 'plaid' || conn.status !== 'active') {
+          const err = new Error('connection is not an active Plaid connection')
+          err.status = 400
+          throw err
+        }
+      }
+      const targets = db.connections.filter(
+        (c) => c.provider === 'plaid' && c.status === 'active' && (!targetId || c.id === targetId),
+      )
       const results = []
-      for (const connection of db.connections.filter((c) => c.provider === 'plaid' && c.status === 'active')) {
-        results.push(await syncPlaidConnection(db, connection))
+      // One failing connection must not abort the whole loop: capture its error onto
+      // the connection (persisted via writeDb -> upsertConnection.last_error) and keep
+      // syncing the rest. syncPlaidConnection clears last_error on success.
+      for (const connection of targets) {
+        try {
+          results.push(await syncPlaidConnection(db, connection))
+        } catch (err) {
+          connection.lastError = err.message || 'Sync failed'
+          connection.updatedAt = new Date().toISOString()
+          results.push({ connectionId: connection.id, ok: false, error: connection.lastError })
+        }
       }
       db.syncEvents.push({
         id: `sync_${crypto.randomUUID()}`,
-        provider: 'all',
+        provider: targetId ? 'plaid' : 'all',
+        connectionId: targetId,
         kind: 'manual_sync',
-        payload: { results },
+        payload: { connectionId: targetId, results },
         createdAt: new Date().toISOString(),
       })
       writeDb(db)

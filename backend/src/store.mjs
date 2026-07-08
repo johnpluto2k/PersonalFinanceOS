@@ -255,6 +255,14 @@ function migrate(con) {
     CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
   `)
 
+  // Bank Connect Phase B1: guarantee the per-connection sync bookkeeping columns
+  // exist on pre-existing DB files. CREATE TABLE IF NOT EXISTS above never alters
+  // an already-created table, so an older finance-os.sqlite could lack these. The
+  // PRAGMA guard makes each ALTER a no-op when the column is present, so this is
+  // idempotent and never throws a "duplicate column name" on the current schema.
+  ensureColumn(con, 'connections', 'last_sync_at', 'TEXT')
+  ensureColumn(con, 'connections', 'last_error', 'TEXT')
+
   // Rules dedup maintenance. ORDERING IS CRITICAL: collapse duplicate patterns
   // FIRST, then create the UNIQUE guard index. The current live DB may hold
   // duplicate `pattern` rows (e.g. the 7 legacy `qa test cafe` rows); creating a
@@ -328,6 +336,13 @@ function migrate(con) {
     throw err
   }
   con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('schema_version', '2')
+}
+
+function ensureColumn(con, table, column, definition) {
+  const columns = con.prepare(`PRAGMA table_info(${table})`).all()
+  if (!columns.some((c) => c.name === column)) {
+    con.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
 }
 
 function countRows(con, table) {
@@ -783,6 +798,40 @@ export function upsertConnection(connection) {
     createdAt: connection.createdAt || now,
     updatedAt: now,
   })
+}
+
+// Unlink a provider connection: remove the connection row plus ONLY the accounts
+// and transactions that belong to it. Scoping is by accounts.connection_id, which
+// is set exclusively for provider-linked accounts (Plaid). Manual accounts and the
+// Apple Card import account carry connection_id = NULL, so their rows — and every
+// transaction whose account_id points at them — are never touched. Transactions are
+// deleted by account_id membership (precise) rather than a broad provider match, so
+// nothing outside this connection's own accounts is affected. Runs in a single short
+// transaction so the delete is all-or-nothing.
+export function deleteConnection(id) {
+  const con = db()
+  const connection = con.prepare('SELECT * FROM connections WHERE id = ?').get(id)
+  if (!connection) {
+    const err = new Error('connection not found')
+    err.status = 404
+    throw err
+  }
+  const accountIds = con.prepare('SELECT id FROM accounts WHERE connection_id = ?').all(id).map((r) => r.id)
+  con.exec('BEGIN')
+  try {
+    let transactionsRemoved = 0
+    if (accountIds.length) {
+      const placeholders = accountIds.map(() => '?').join(', ')
+      transactionsRemoved = con.prepare(`DELETE FROM transactions WHERE account_id IN (${placeholders})`).run(...accountIds).changes
+    }
+    const accountsRemoved = con.prepare('DELETE FROM accounts WHERE connection_id = ?').run(id).changes
+    con.prepare('DELETE FROM connections WHERE id = ?').run(id)
+    con.exec('COMMIT')
+    return { removed: true, id, accountsRemoved, transactionsRemoved }
+  } catch (err) {
+    con.exec('ROLLBACK')
+    throw err
+  }
 }
 
 export function upsertAccount(snapshot, account) {

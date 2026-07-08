@@ -556,6 +556,14 @@ h3 {
   font-size: 12px;
 }
 
+/* Long unbreakable detail strings (e.g. the SQLite file path in the provider
+   panel) must wrap inside their own grid track instead of overflowing into and
+   colliding with the right-aligned chip. Scoped to list rows so short details
+   and finance-card copy are unaffected. */
+.list-row p {
+  overflow-wrap: anywhere;
+}
+
 .money,
 .number {
   font-variant-numeric: tabular-nums;
@@ -899,6 +907,160 @@ label {
   color: var(--muted);
   padding: 18px;
   background: var(--bg-elevated);
+}
+
+.onboarding-card {
+  margin-bottom: 14px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(13, 17, 23, 0.95);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.onboarding-card[hidden] {
+  display: none;
+}
+
+.onboard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.onboard-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.onboard-step {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  padding: 11px 12px;
+}
+
+.onboard-mark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.onboard-mark svg {
+  width: 15px;
+  height: 15px;
+}
+
+.onboard-step.is-done .onboard-mark {
+  color: var(--green);
+  border-color: rgba(61, 220, 151, 0.35);
+  background: var(--green-soft);
+}
+
+.onboard-step strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.onboard-step p,
+.onboard-hint {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.onboard-hint {
+  margin: 0;
+}
+
+.onboarding-card .primary-button {
+  justify-self: start;
+}
+
+.connect-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.connect-empty strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.connect-empty p {
+  margin: 4px 0 0;
+}
+
+.conn-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  padding: 11px 12px;
+}
+
+.conn-main {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.conn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.conn-head strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+}
+
+.conn-main p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.conn-error {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conn-actions {
+  margin-top: 0;
+  flex: 0 0 auto;
 }
 
 .dialog {

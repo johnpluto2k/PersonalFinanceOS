@@ -149,7 +149,10 @@ export async function syncPlaidConnection(db, connection) {
     hasMore = Boolean(page.has_more)
   }
 
+  const now = new Date().toISOString()
   connection.cursor = cursor
-  connection.updatedAt = new Date().toISOString()
-  return { connectionId: connection.id, accountsTouched, added, modified, removed }
+  connection.lastSyncAt = now
+  connection.lastError = null
+  connection.updatedAt = now
+  return { connectionId: connection.id, ok: true, accountsTouched, added, modified, removed }
 }

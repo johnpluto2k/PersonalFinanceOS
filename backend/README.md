@@ -34,6 +34,8 @@ http://127.0.0.1:8787/
 | `GET` | `/health` | Server and storage health |
 | `GET` | `/api/summary` | Net worth, assets, debt, transaction counts |
 | `GET` | `/api/accounts` | Stored accounts |
+| `GET` | `/api/connections` | Linked provider connections with sync status (`lastSyncedAt`, `lastError`) |
+| `DELETE` | `/api/connections/:id` | Unlink a connection and remove only its provider-linked accounts and transactions (manual + Apple import data untouched) |
 | `GET` | `/api/transactions?limit=100` | Unified transaction ledger |
 | `GET` | `/api/transactions.csv` | CSV export of the unified ledger |
 | `PATCH` | `/api/transactions/:id` | Recategorize a transaction and optionally create an automation rule |
@@ -57,7 +59,7 @@ http://127.0.0.1:8787/
 | `POST` | `/api/import/apple-card` | Import Apple Card exported CSV text |
 | `POST` | `/api/providers/plaid/link-token` | Create a Plaid Link token |
 | `POST` | `/api/providers/plaid/exchange-public-token` | Store encrypted Plaid access token |
-| `POST` | `/api/sync` | Sync linked provider accounts |
+| `POST` | `/api/sync` | Sync linked provider accounts; optional JSON body `{ connectionId }` syncs just that connection, otherwise all active Plaid connections |
 | `POST` | `/api/webhooks/plaid` | Plaid webhook receiver stub |
 
 ## Apple Card import

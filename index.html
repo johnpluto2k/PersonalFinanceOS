@@ -256,10 +256,21 @@
         <section id="connections" class="view" aria-labelledby="connections-title">
           <div class="section-head">
             <div><span class="label">Providers</span><h2 id="connections-title" class="sr-only">Connections</h2></div>
+            <button class="primary-button connect-trigger" id="connectBankBtn">
+              <svg viewBox="0 0 24 24"><path d="M3 10h18M6 6h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" /><path d="M15 15h2" /></svg>
+              <span>Connect a bank</span>
+            </button>
           </div>
+          <div id="onboardingCard" class="onboarding-card" hidden></div>
           <div class="dashboard-grid two">
-            <article class="panel"><div id="connectionList" class="row-stack skeleton"></div></article>
-            <article class="panel"><div id="providerPanel" class="row-stack skeleton"></div></article>
+            <article class="panel">
+              <div class="panel-heading"><div><span class="label">Linked</span><h3>Institutions</h3></div></div>
+              <div id="connectionList" class="row-stack skeleton"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><span class="label">Lanes</span><h3>Provider status</h3></div></div>
+              <div id="providerPanel" class="row-stack skeleton"></div>
+            </article>
           </div>
         </section>
       </main>
@@ -367,6 +378,7 @@
       </form>
     </dialog>
 
+    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -31,3 +31,7 @@ Thumbs.db
 
 # Agent verification scratch dumps (may contain financial data)
 scratch_*.json
+
+# Claude Code user settings (local permissions, not shared)
+.claude/settings.json
+.claude/settings.local.json

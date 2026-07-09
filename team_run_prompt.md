@@ -46,6 +46,68 @@ worth history → Budgets & spending insights → Rules & automation → Tax & d
 Then — and only then — start the next feature. Do not begin feature N+1 until
 feature N has passed QA, the audit, review, and the Gate 2 commit.
 
+## End-of-session report (Agent HQ)
+
+When the session ends — after a Gate 2 commit, at a stopping point, or on a
+failure — file a report to John's Obsidian dashboard yourself (conductor). A
+failure/stopped-at-gate report is still a report:
+
+- Write `C:\ClaudeProjects\ObsidianVault\Reports\<YYYY-MM-DD> Finance team.md`
+  (overwrite if re-run same day), short and in this shape:
+
+  ```markdown
+  # Finance team — <YYYY-MM-DD>
+
+  **Result:** ✅ feature committed | ⚠️ stopped at a gate | ❌ errored
+  **Needs John:** no  *(or: yes — e.g. "approve Gate 1 plan for Rules")*
+
+  - Feature worked on: <name> — <phase reached>
+  - QA: <passed/failed, screenshot verdict> · Audit: <clean/finding>
+  - Committed: <yes + one-line diff summary / no + why>
+
+  Dashboard: [[Agent HQ]]
+
+  #report #finance-team
+  ```
+
+- Then update the **Finance team row only** of the "Team status" table in
+  `C:\ClaudeProjects\ObsidianVault\1 Projects\Agent HQ.md` to
+  `| Finance team | <YYYY-MM-DD> | ✅/⚠️/❌ <three-word summary> | yes/no |`.
+  Touch nothing else in that file.
+- If the vault isn't writable, say so in your closing summary and finish
+  normally — reporting must never block or replace a gate.
+
+## Monthly money summary (Obsidian vault)
+
+Right after the Agent HQ report, check whether
+`C:\ClaudeProjects\ObsidianVault\2 Areas\Money & Investing\<YYYY-MM>.md` exists
+for the **current month**. If it's missing (first run of a new month), create it:
+
+1. Run `node vault_summary.mjs` from the repo root (read-only; it never touches
+   the DB beyond reads) and take its markdown output.
+2. Write the note in this shape, pasting the script output under the header:
+
+   ```markdown
+   # Money — <YYYY-MM>
+
+   *Auto-written by the Finance team — summaries only. Source: PersonalFinanceOS.*
+   Back to [[Money & Investing]] · App project: [[PersonalFinanceOS]]
+
+   <vault_summary.mjs output>
+
+   #finance #monthly
+   ```
+
+3. Add one line to today's daily note
+   (`ObsidianVault\Daily Notes\<YYYY-MM-DD>.md`, create from
+   `Templates\Daily Note.md` if missing) under `## Finances`:
+   `- Monthly summary written: [[<YYYY-MM>]]` — touch nothing else in the note.
+
+**Privacy line (hard):** the vault syncs to GitHub. Only aggregated figures go
+in — never raw transactions, merchant-level line items, account numbers/masks,
+or tokens. If vault_summary.mjs errors, skip this step and note it in the
+closing summary; never hand-query the DB into the vault instead.
+
 ## Hard safety lines (never cross)
 
 - **Node built-ins only** in the backend — no npm dependencies.

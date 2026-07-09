@@ -1060,7 +1060,7 @@ export function listBudgets() {
       transactionCount: Number(current.count || 0),
       remaining: hasCap ? budget.monthlyLimit - spent : null,
       percent: hasCap ? Math.min(999, Math.round((spent / budget.monthlyLimit) * 100)) : 0,
-      deltaFromPrevious: spent - Number(previous.total || 0),
+      deltaFromPrevious: Number(previous.total || 0) - spent,
       topMerchants: merchants.map((merchant) => ({
         merchant: merchant.merchant,
         total: Number(merchant.total || 0),

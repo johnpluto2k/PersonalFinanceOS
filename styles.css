@@ -340,6 +340,7 @@ h3 {
 .secondary-button,
 .icon-action,
 .segmented button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -356,6 +357,30 @@ h3 {
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
   outline: 2px solid transparent;
   outline-offset: 2px;
+  overflow: hidden;
+}
+
+.primary-button::before,
+.secondary-button::before,
+.icon-action::before,
+.segmented button::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.15);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.primary-button:active::before,
+.secondary-button:active::before,
+.icon-action:active::before,
+.segmented button:active::before {
+  animation: ripple 600ms ease-out;
 }
 
 .primary-button:focus-visible,
@@ -494,6 +519,8 @@ h3 {
   gap: 2px;
   height: 24px;
   margin-bottom: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .heatmap-day {
@@ -723,6 +750,87 @@ h3 {
   transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
 }
 
+.chip[data-category],
+.chip.clickable {
+  cursor: pointer;
+}
+
+.chip[data-category]:hover {
+  opacity: 1.1;
+}
+
+/* Category chip colors */
+.chip.category-dining { background-color: rgba(60, 207, 142, 0.1); color: #3ECF8E; border-color: rgba(60, 207, 142, 0.3); }
+.chip.category-groceries { background-color: rgba(255, 165, 0, 0.1); color: #FFA500; border-color: rgba(255, 165, 0, 0.3); }
+.chip.category-transport { background-color: rgba(124, 111, 255, 0.1); color: #7C6FFF; border-color: rgba(124, 111, 255, 0.3); }
+.chip.category-shopping { background-color: rgba(255, 69, 69, 0.1); color: #FF4545; border-color: rgba(255, 69, 69, 0.3); }
+.chip.category-utilities { background-color: rgba(100, 200, 255, 0.1); color: #64C8FF; border-color: rgba(100, 200, 255, 0.3); }
+.chip.category-subscriptions { background-color: rgba(200, 100, 255, 0.1); color: #C864FF; border-color: rgba(200, 100, 255, 0.3); }
+.chip.category-entertainment { background-color: rgba(168, 85, 247, 0.1); color: #A855F7; border-color: rgba(168, 85, 247, 0.3); }
+.chip.category-health { background-color: rgba(34, 197, 94, 0.1); color: #22C55E; border-color: rgba(34, 197, 94, 0.3); }
+
+/* Category menu for inline recategorization */
+.category-menu {
+  position: absolute;
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 180px;
+  overflow: hidden;
+  animation: slideInBottom 150ms ease-out;
+}
+
+.category-menu.show {
+  display: flex;
+}
+
+.category-menu button {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: var(--space-sm) var(--space-md);
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  transition: background-color var(--transition-fast);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.category-menu button:last-of-type {
+  border-bottom: 0;
+}
+
+.category-menu button:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.category-menu label {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  border-top: 1px solid var(--line-soft);
+  transition: background-color var(--transition-fast);
+}
+
+.category-menu label:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.category-menu input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin-right: var(--space-sm);
+  cursor: pointer;
+}
+
 .chip.good,
 .status-chip.verified {
   color: var(--semantic-positive);
@@ -905,8 +1013,16 @@ label {
   border-bottom: 0;
 }
 
+.data-table tr {
+  transition: background-color var(--transition-fast);
+}
+
 .data-table tr:hover td {
   background: rgba(255, 255, 255, 0.025);
+}
+
+.data-table tr.transaction-row:hover {
+  background-color: rgba(255, 255, 255, 0.04);
 }
 
 .category-editor {
@@ -914,6 +1030,15 @@ label {
   grid-template-columns: minmax(126px, 1fr) auto;
   gap: 8px;
   align-items: center;
+  position: relative;
+}
+
+.category-select {
+  cursor: pointer;
+}
+
+.category-cell {
+  position: relative;
 }
 
 .inline-check {
@@ -1047,6 +1172,30 @@ label {
   color: var(--text-secondary);
   padding: var(--space-lg);
   background: var(--bg-elevated);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.empty-state strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: var(--font-size-lg);
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.empty-state p {
+  max-width: 300px;
+  margin: 0 0 var(--space-lg);
+  color: var(--text-secondary);
+}
+
+.empty-state .empty-icon {
+  font-size: 48px;
+  opacity: 0.6;
 }
 
 .onboarding-card {
@@ -1290,6 +1439,7 @@ label {
   display: grid;
   gap: 8px;
   width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
 }
 
 .toast {
@@ -1297,15 +1447,42 @@ label {
   border-radius: var(--radius);
   background: #101821;
   color: var(--text);
-  box-shadow: var(--shadow);
-  padding: var(--space-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: var(--space-md);
   font-size: var(--font-size-base);
   font-weight: 760;
+  opacity: 0;
+  transform: translateX(400px) translateY(0);
+  transition: all var(--transition-normal) ease-out;
+  pointer-events: auto;
+  animation: toastIn 300ms ease-out forwards;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(0) translateY(0);
+  animation: none;
 }
 
 .toast.error {
   border-color: rgba(255, 69, 69, 0.35);
   color: var(--semantic-negative);
+}
+
+.toast.success {
+  border-color: rgba(61, 220, 151, 0.35);
+  color: var(--semantic-positive);
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(400px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .bottom-tabs {
@@ -1337,9 +1514,42 @@ label {
   animation: shimmer 1.15s linear infinite;
 }
 
+.skeleton.chart-frame {
+  min-height: 210px;
+  border: 1px solid var(--border);
+}
+
+.skeleton.chart-frame.tall {
+  min-height: 360px;
+}
+
 @keyframes shimmer {
   to {
     background-position-x: -220%;
+  }
+}
+
+@keyframes ripple {
+  from {
+    width: 0;
+    height: 0;
+    opacity: 1;
+  }
+  to {
+    width: 300px;
+    height: 300px;
+    opacity: 0;
+  }
+}
+
+@keyframes slideInBottom {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 
@@ -1384,6 +1594,8 @@ label {
   .fade-in,
   .slide-in-bottom,
   .slide-in-left,
+  .toast,
+  .category-menu,
   .nav-button,
   .bottom-tabs button,
   .primary-button,
@@ -1399,6 +1611,13 @@ label {
   .search-box {
     animation: none !important;
     transition: none !important;
+  }
+
+  .primary-button::before,
+  .secondary-button::before,
+  .icon-action::before,
+  .segmented button::before {
+    display: none;
   }
 }
 
@@ -1549,7 +1768,8 @@ label {
   }
 
   .table-scroller {
-    overflow: visible;
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
     border: 0;
     background: transparent;
     box-shadow: none;
@@ -1608,6 +1828,54 @@ label {
   }
 }
 
+/* Keyboard shortcuts modal */
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.shortcut-group h4 {
+  display: block;
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.shortcut-item:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-key {
+  display: inline-flex;
+  gap: 4px;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.shortcut-key kbd {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 @media (max-width: 520px) {
   .main {
     padding: 12px;
@@ -1646,5 +1914,9 @@ label {
     width: 20px;
     height: 20px;
     flex: 0 0 auto;
+  }
+
+  .shortcuts-grid {
+    grid-template-columns: 1fr;
   }
 }

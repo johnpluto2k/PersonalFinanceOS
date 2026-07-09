@@ -174,17 +174,39 @@ function del(path) {
   return request(path, { method: 'DELETE' })
 }
 
-function toast(message, tone = 'info') {
+function toast(message, tone = 'info', duration = 3000) {
   const stack = $('toastStack')
   const item = document.createElement('div')
-  item.className = tone === 'error' ? 'toast error' : 'toast'
+  const classes = ['toast']
+  if (tone === 'error') classes.push('error')
+  if (tone === 'success') classes.push('success')
+  item.className = classes.join(' ')
   item.textContent = message
   stack.append(item)
-  window.setTimeout(() => item.remove(), 4200)
+
+  // Trigger animation
+  requestAnimationFrame(() => {
+    item.classList.add('show')
+  })
+
+  // Remove after delay
+  const timeoutId = window.setTimeout(() => {
+    item.classList.remove('show')
+    window.setTimeout(() => item.remove(), 200)
+  }, duration)
+
+  return { item, timeoutId }
 }
 
-function emptyState(message) {
-  return `<div class="empty-state">${escapeHtml(message)}</div>`
+function emptyState(icon, title, message, ctaHtml = '') {
+  return `
+    <div class="empty-state">
+      <div class="empty-icon">${escapeHtml(icon)}</div>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(message)}</p>
+      ${ctaHtml ? `<div class="empty-cta">${ctaHtml}</div>` : ''}
+    </div>
+  `
 }
 
 function listRow({ title, detail, right, chip, tone = '' }) {
@@ -237,7 +259,7 @@ function progressBar(percent, options = {}) {
 }
 
 function lineChart(points) {
-  if (!points?.length) return emptyState('No history yet.')
+  if (!points?.length) return emptyState('📈', 'No history', 'Transactions will appear here')
   const width = 760
   const height = 220
   const pad = 24
@@ -291,7 +313,7 @@ function lineChart(points) {
 
 function cashflowBars(months) {
   const data = (months || []).slice(-8)
-  if (!data.length) return emptyState('No cashflow yet.')
+  if (!data.length) return emptyState('💸', 'No cashflow', 'Data will appear as transactions are imported')
   const width = 760
   const height = 360
   const pad = 34
@@ -331,7 +353,7 @@ function cashflowBars(months) {
 
 function donutChart(items) {
   const data = (items || []).filter((item) => item.total > 0).slice(0, 7)
-  if (!data.length) return emptyState('No category spend yet.')
+  if (!data.length) return emptyState('🍕', 'No spend', 'Spending patterns will appear here')
   const total = data.reduce((sum, item) => sum + Number(item.total || 0), 0)
   const radius = 58
   const circumference = 2 * Math.PI * radius
@@ -408,7 +430,7 @@ function renderOverview() {
 function renderActionQueue() {
   const target = clearSkeleton('actionQueue')
   if (!state.actions.length) {
-    target.innerHTML = emptyState('No urgent actions.')
+    target.innerHTML = emptyState('📋', 'No actions', 'All caught up!')
     return
   }
   target.innerHTML = state.actions.slice(0, 6).map((action) => listRow({
@@ -422,7 +444,7 @@ function renderActionQueue() {
 function renderBudgetPulse() {
   const target = clearSkeleton('budgetPulse')
   if (!state.budgets.length) {
-    target.innerHTML = emptyState('No budgets yet.')
+    target.innerHTML = emptyState('💰', 'No budgets', 'Create a budget to start tracking')
     return
   }
   target.innerHTML = state.budgets
@@ -441,7 +463,7 @@ function renderBudgetPulse() {
 function renderRecentTransactions() {
   const target = clearSkeleton('recentTransactions')
   if (!state.transactions.length) {
-    target.innerHTML = emptyState('No transactions yet.')
+    target.innerHTML = emptyState('📊', 'No transactions', 'Import CSV or connect a bank to get started')
     return
   }
   target.innerHTML = state.transactions.slice(0, 7).map((tx) => `
@@ -496,23 +518,39 @@ function renderTransactions() {
   const tbody = $('transactionTable')
   const rows = sortedFilteredTransactions()
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="5">${emptyState('No matching transactions.')}</td></tr>`
+    tbody.innerHTML = `<tr><td colspan="5">${emptyState('🔍', 'No transactions', 'No transactions match your filters')}</td></tr>`
     return
   }
+  const getCategoryClass = (category) => {
+    const cat = String(category || '').toLowerCase()
+    if (cat.includes('dining') || cat.includes('restaurant')) return 'category-dining'
+    if (cat.includes('grocery') || cat.includes('supermarket')) return 'category-groceries'
+    if (cat.includes('transport') || cat.includes('taxi') || cat.includes('gas')) return 'category-transport'
+    if (cat.includes('shopping') || cat.includes('retail')) return 'category-shopping'
+    if (cat.includes('utility') || cat.includes('phone') || cat.includes('internet')) return 'category-utilities'
+    if (cat.includes('subscription') || cat.includes('membership')) return 'category-subscriptions'
+    if (cat.includes('entertainment') || cat.includes('movie') || cat.includes('game')) return 'category-entertainment'
+    if (cat.includes('health') || cat.includes('medical') || cat.includes('pharmacy')) return 'category-health'
+    return ''
+  }
+
   const categoryOptions = (selected) => state.categories.map((category) => (
     `<option value="${escapeHtml(category)}" ${category === selected ? 'selected' : ''}>${escapeHtml(category)}</option>`
   )).join('')
-  tbody.innerHTML = rows.map((tx) => `
-    <tr>
+
+  tbody.innerHTML = rows.map((tx) => {
+    const selectedCat = tx.category || 'Uncategorized'
+    return `
+    <tr class="transaction-row">
       <td data-label="Date">${escapeHtml(tx.date || '')}</td>
       <td data-label="Merchant">
         <strong>${escapeHtml(tx.merchant || tx.description || 'Transaction')}</strong>
         <p>${escapeHtml(tx.description || '')}</p>
       </td>
-      <td data-label="Category">
+      <td data-label="Category" class="category-cell">
         <div class="category-editor">
           <select class="category-select" data-id="${escapeHtml(tx.id)}" aria-label="Category for ${escapeHtml(tx.merchant || 'transaction')}">
-            ${categoryOptions(tx.category || 'Uncategorized')}
+            ${categoryOptions(selectedCat)}
           </select>
           <label class="inline-check"><input class="always-check" type="checkbox" />Always</label>
         </div>
@@ -520,7 +558,8 @@ function renderTransactions() {
       <td data-label="Source"><span class="chip">${escapeHtml(tx.provider || tx.source || '')}</span></td>
       <td data-label="Amount" class="${amountClass(tx.amount)} number">${escapeHtml(fmtAmount(tx.amount))}</td>
     </tr>
-  `).join('')
+  `
+  }).join('')
 }
 
 function renderBudgets() {
@@ -531,7 +570,7 @@ function renderBudgets() {
 
   const target = clearSkeleton('budgetGrid')
   if (!state.budgets.length) {
-    target.innerHTML = emptyState('No budgets yet.')
+    target.innerHTML = emptyState('💰', 'No budgets', 'Click "Budget" to create your first budget')
     return
   }
   target.innerHTML = state.budgets.map((budget) => {
@@ -567,7 +606,7 @@ function renderCashflow() {
 
   const target = clearSkeleton('cashflowStats')
   if (!state.cashflow.length) {
-    target.innerHTML = emptyState('No cashflow yet.')
+    target.innerHTML = emptyState('📊', 'No cashflow', 'Import transactions to see your cashflow')
     return
   }
   target.innerHTML = state.cashflow.slice(0, 8).map((month) => listRow({
@@ -589,7 +628,7 @@ function renderSubscriptions() {
   const summary = $('subscriptionSummary')
   if (!state.subscriptions.length) {
     if (summary) summary.innerHTML = ''
-    target.innerHTML = emptyState('No recurring charges detected.')
+    target.innerHTML = emptyState('🔄', 'No subscriptions', 'Recurring charges will appear here')
     return
   }
   if (summary) {
@@ -619,7 +658,7 @@ function renderAccounts() {
 
   const target = $('accountGrid')
   if (!state.accounts.length) {
-    target.innerHTML = emptyState('No accounts yet.')
+    target.innerHTML = emptyState('🏦', 'No accounts', 'Connect a bank or add a manual account')
     return
   }
   target.innerHTML = state.accounts.map((account) => {
@@ -665,7 +704,7 @@ function renderDocuments() {
   `
   const target = $('documentGrid')
   if (!docs.length) {
-    target.innerHTML = emptyState('No documents for this year.')
+    target.innerHTML = emptyState('📄', 'No documents', 'Upload documents for this year')
     return
   }
   const toneForStatus = { verified: 'good', received: 'warn', needed: 'bad' }
@@ -693,7 +732,7 @@ function renderTaxes() {
   const tasks = state.taxes.filter((task) => Number(task.taxYear) === Number(state.taxYear))
   const taskTarget = clearSkeleton('taxTaskList')
   if (!tasks.length) {
-    taskTarget.innerHTML = emptyState('No tax tasks for this year.')
+    taskTarget.innerHTML = emptyState('✅', 'All set', 'No tax tasks for this year')
   } else {
     taskTarget.innerHTML = tasks.map((task) => {
       const days = daysUntil(task.dueDate)
@@ -727,13 +766,13 @@ function renderTaxes() {
       chip: 'tagged',
       tone: 'good',
     })).join('')
-    : emptyState('No deduction tags yet.')
+    : emptyState('🏷️', 'No deductions', 'Tag transactions to claim deductions')
 }
 
 function renderAutomation() {
   const target = $('ruleGrid')
   if (!state.rules.length) {
-    target.innerHTML = emptyState('No rules yet.')
+    target.innerHTML = emptyState('⚙️', 'No rules', 'Create a rule to auto-categorize transactions')
     return
   }
   target.innerHTML = state.rules.map((rule) => {
@@ -838,18 +877,7 @@ function renderConnections() {
   renderOnboarding()
   const list = clearSkeleton('connectionList')
   if (!state.connections.length) {
-    list.innerHTML = `
-      <div class="empty-state connect-empty">
-        <div>
-          <strong>No banks linked yet</strong>
-          <p>Link an institution to pull balances and transactions automatically.</p>
-        </div>
-        <button class="primary-button connect-trigger" id="connectBankEmptyBtn">
-          <svg viewBox="0 0 24 24"><path d="M3 10h18M6 6h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" /><path d="M15 15h2" /></svg>
-          <span>Connect a bank</span>
-        </button>
-      </div>
-    `
+    list.innerHTML = emptyState('🏦', 'No banks linked', 'Link an institution to sync accounts automatically')
   } else {
     list.innerHTML = state.connections.map(connectionRow).join('')
   }
@@ -980,6 +1008,36 @@ async function refreshHistory() {
   renderOverview()
 }
 
+function openCategoryMenu(event, txId, currentCategory) {
+  event.stopPropagation()
+  const menu = $(`menu-${txId}`)
+  if (!menu) return
+
+  // Close other menus
+  document.querySelectorAll('.category-menu.show').forEach((m) => {
+    if (m.id !== `menu-${txId}`) m.classList.remove('show')
+  })
+
+  // Toggle this menu
+  menu.classList.toggle('show')
+}
+
+async function recategorizeTransaction(txId, category, createRule) {
+  try {
+    const result = await patch(`/api/transactions/${encodeURIComponent(txId)}`, {
+      category,
+      always: createRule,
+    })
+    toast(`Category updated to ${category}`, 'success')
+    // Close menu
+    const menu = $(`menu-${txId}`)
+    if (menu) menu.classList.remove('show')
+    await load({ quiet: true })
+  } catch (err) {
+    toast(err.message, 'error')
+  }
+}
+
 function showView(id) {
   state.view = id
   document.querySelectorAll('.view').forEach((view) => view.classList.toggle('active', view.id === id))
@@ -997,6 +1055,10 @@ function showView(id) {
 function openDialog(id) {
   const dialog = $(id)
   if (dialog && !dialog.open) dialog.showModal()
+}
+
+function openKeyboardShortcutsHelp() {
+  openDialog('shortcutsDialog')
 }
 
 function closeDialogFromButton(button) {
@@ -1022,8 +1084,19 @@ function openBudgetDialog(budget) {
   openDialog('budgetDialog')
 }
 
+function closeAllMenus() {
+  document.querySelectorAll('.category-menu.show').forEach((menu) => {
+    menu.classList.remove('show')
+  })
+}
+
 function bindEvents() {
   document.addEventListener('click', async (event) => {
+    // Close category menus when clicking outside
+    if (!event.target.closest('.category-cell') && !event.target.closest('.category-menu')) {
+      closeAllMenus()
+    }
+
     const moreMenuBtn = event.target.closest('#moreMenuBtn')
     if (moreMenuBtn) {
       const dialog = $('moreMenuDialog')
@@ -1073,6 +1146,7 @@ function bindEvents() {
       return
     }
 
+    if (event.target.closest('#helpBtn')) openKeyboardShortcutsHelp()
     if (event.target.closest('#addAccountBtn')) openDialog('accountDialog')
     if (event.target.closest('#appleImportBtn')) openDialog('appleDialog')
     if (event.target.closest('#addBudgetBtn')) openBudgetDialog(null)
@@ -1344,10 +1418,25 @@ function bindEvents() {
     const tag = event.target.tagName
     const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)
     if (event.metaKey || event.ctrlKey || event.altKey) return
+
+    // Escape closes menus and dialogs
+    if (event.key === 'Escape') {
+      closeAllMenus()
+      document.querySelectorAll('dialog.show, dialog[open]').forEach((dialog) => {
+        if (dialog.open) dialog.close()
+      })
+      return
+    }
+
     if (event.key === '/' && !editing) {
       event.preventDefault()
       showView('transactions')
       window.setTimeout(() => $('txSearch')?.focus(), 0)
+      return
+    }
+    if (event.key === '?' && !editing) {
+      event.preventDefault()
+      openKeyboardShortcutsHelp()
       return
     }
     if (editing) return

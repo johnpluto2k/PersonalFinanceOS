@@ -82,6 +82,9 @@
             <button class="icon-action" id="syncBtn" title="Sync now" aria-label="Sync now">
               <svg viewBox="0 0 24 24"><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M18 12a6 6 0 0 0-10-4.5L4 12m2 0a6 6 0 0 0 10 4.5L20 12" /></svg>
             </button>
+            <button class="icon-action" id="helpBtn" title="Keyboard shortcuts (? key)" aria-label="Keyboard shortcuts">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><text x="12" y="16" text-anchor="middle" font-size="14" fill="currentColor">?</text></svg>
+            </button>
             <button class="secondary-button" id="appleImportBtn">
               <svg viewBox="0 0 24 24"><path d="M12 4v12" /><path d="m8 12 4 4 4-4" /><path d="M5 20h14" /></svg>
               <span>Apple CSV</span>
@@ -433,6 +436,64 @@
           <span>Connections</span>
         </button>
       </nav>
+    </dialog>
+
+    <dialog id="shortcutsDialog" class="dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <div><span class="label">Tips</span><h2>Keyboard shortcuts</h2></div>
+          <button class="icon-action" value="cancel" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <div class="shortcuts-grid">
+          <div class="shortcut-group">
+            <h4>Navigation</h4>
+            <div class="shortcut-item">
+              <span>Go to Overview</span>
+              <span class="shortcut-key"><kbd>G</kbd> <kbd>O</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Go to Transactions</span>
+              <span class="shortcut-key"><kbd>G</kbd> <kbd>T</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Go to Budgets</span>
+              <span class="shortcut-key"><kbd>G</kbd> <kbd>B</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Go to Cashflow</span>
+              <span class="shortcut-key"><kbd>G</kbd> <kbd>C</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Go to Subscriptions</span>
+              <span class="shortcut-key"><kbd>G</kbd> <kbd>S</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Go to Accounts</span>
+              <span class="shortcut-key"><kbd>G</kbd> <kbd>A</kbd></span>
+            </div>
+          </div>
+          <div class="shortcut-group">
+            <h4>Controls</h4>
+            <div class="shortcut-item">
+              <span>Search transactions</span>
+              <span class="shortcut-key"><kbd>/</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Show shortcuts</span>
+              <span class="shortcut-key"><kbd>?</kbd></span>
+            </div>
+            <div class="shortcut-item">
+              <span>Close dialog</span>
+              <span class="shortcut-key"><kbd>Esc</kbd></span>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="primary-button" value="default">Got it</button>
+        </div>
+      </form>
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>

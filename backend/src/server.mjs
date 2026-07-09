@@ -41,6 +41,7 @@ const STATIC_FILES = new Map([
   ['/index.html', 'index.html'],
   ['/styles.css', 'styles.css'],
   ['/app.js', 'app.js'],
+  ['/charts.js', 'charts.js'],
 ])
 
 // This server also serves its own frontend, so real requests are same-origin and

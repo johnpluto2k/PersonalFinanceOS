@@ -109,7 +109,9 @@
                   <button data-range="ALL">All</button>
                 </div>
               </div>
-              <div id="netWorthChart" class="chart-frame skeleton"></div>
+              <div class="chart-frame">
+                <canvas id="netWorthChart"></canvas>
+              </div>
               <div class="metric-strip">
                 <div><span>Assets</span><strong id="assetTotal">$0</strong></div>
                 <div><span>Debt</span><strong id="debtTotal">$0</strong></div>
@@ -164,6 +166,7 @@
               <select id="categoryFilter" aria-label="Category filter"></select>
             </div>
           </div>
+          <div id="heatmapContainer" class="heatmap-container"></div>
           <div class="table-scroller">
             <table class="data-table">
               <thead>
@@ -188,6 +191,9 @@
               <span>Budget</span>
             </button>
           </div>
+          <div class="chart-frame">
+            <canvas id="budgetChart"></canvas>
+          </div>
           <div id="budgetGrid" class="card-grid skeleton"></div>
         </section>
 
@@ -196,7 +202,7 @@
             <div><span class="label">Income vs spend</span><h2 id="cashflow-title" class="sr-only">Cashflow</h2></div>
           </div>
           <div class="dashboard-grid two">
-            <article class="panel wide"><div id="cashflowChart" class="chart-frame tall skeleton"></div></article>
+            <article class="panel wide"><div class="chart-frame tall"><canvas id="cashflowChart"></canvas></div></article>
             <article class="panel"><div id="cashflowStats" class="row-stack skeleton"></div></article>
           </div>
         </section>
@@ -206,12 +212,18 @@
             <div><span class="label">Recurring detection</span><h2 id="subscriptions-title" class="sr-only">Subscriptions</h2></div>
             <div id="subscriptionSummary" class="sub-summary"></div>
           </div>
+          <div class="chart-frame tall">
+            <canvas id="subscriptionChart"></canvas>
+          </div>
           <div id="subscriptionGrid" class="card-grid"></div>
         </section>
 
         <section id="accounts" class="view" aria-labelledby="accounts-title">
           <div class="section-head">
             <div><span class="label">Balance sheet</span><h2 id="accounts-title" class="sr-only">Accounts</h2></div>
+          </div>
+          <div class="chart-frame tall">
+            <canvas id="accountChart"></canvas>
           </div>
           <div id="accountGrid" class="card-grid"></div>
         </section>
@@ -423,7 +435,9 @@
       </nav>
     </dialog>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+    <script src="charts.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

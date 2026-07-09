@@ -392,7 +392,13 @@ function renderOverview() {
     button.classList.toggle('active', button.dataset.range === state.historyRange)
   })
 
-  clearSkeleton('netWorthChart').innerHTML = lineChart(state.history.snapshots)
+  // Use Chart.js for net worth visualization
+  if (typeof initNetWorthChart === 'function') {
+    initNetWorthChart('netWorthChart', state.history.snapshots, state.historyRange)
+  } else {
+    clearSkeleton('netWorthChart').innerHTML = lineChart(state.history.snapshots)
+  }
+
   renderActionQueue()
   renderBudgetPulse()
   renderRecentTransactions()
@@ -481,6 +487,12 @@ function renderTransactionControls() {
 
 function renderTransactions() {
   renderTransactionControls()
+
+  // Initialize transaction heatmap
+  if (typeof initTransactionHeatmap === 'function') {
+    initTransactionHeatmap('heatmapContainer', state.transactions)
+  }
+
   const tbody = $('transactionTable')
   const rows = sortedFilteredTransactions()
   if (!rows.length) {
@@ -512,6 +524,11 @@ function renderTransactions() {
 }
 
 function renderBudgets() {
+  // Initialize budget chart
+  if (typeof initBudgetChart === 'function') {
+    initBudgetChart('budgetChart', state.budgets)
+  }
+
   const target = clearSkeleton('budgetGrid')
   if (!state.budgets.length) {
     target.innerHTML = emptyState('No budgets yet.')
@@ -541,7 +558,13 @@ function renderBudgets() {
 }
 
 function renderCashflow() {
-  clearSkeleton('cashflowChart').innerHTML = cashflowBars(state.cashflow.slice().reverse())
+  // Use Chart.js for cashflow visualization
+  if (typeof initCashflowChart === 'function') {
+    initCashflowChart('cashflowChart', state.cashflow)
+  } else {
+    clearSkeleton('cashflowChart').innerHTML = cashflowBars(state.cashflow.slice().reverse())
+  }
+
   const target = clearSkeleton('cashflowStats')
   if (!state.cashflow.length) {
     target.innerHTML = emptyState('No cashflow yet.')
@@ -557,6 +580,11 @@ function renderCashflow() {
 }
 
 function renderSubscriptions() {
+  // Initialize subscription chart
+  if (typeof initSubscriptionChart === 'function') {
+    initSubscriptionChart('subscriptionChart', state.subscriptions)
+  }
+
   const target = $('subscriptionGrid')
   const summary = $('subscriptionSummary')
   if (!state.subscriptions.length) {
@@ -584,6 +612,11 @@ function renderSubscriptions() {
 }
 
 function renderAccounts() {
+  // Initialize account chart
+  if (typeof initAccountChart === 'function') {
+    initAccountChart('accountChart', state.accounts)
+  }
+
   const target = $('accountGrid')
   if (!state.accounts.length) {
     target.innerHTML = emptyState('No accounts yet.')

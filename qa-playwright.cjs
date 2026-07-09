@@ -4,7 +4,8 @@ const { chromium } = require('C:/ClaudeProjects/MLB_Bot/node_modules/playwright'
 
 const ROOT = __dirname
 const SHOTS = path.join(ROOT, 'shots')
-const URL = 'http://127.0.0.1:8787/'
+const PORT = process.env.PORT || 8788
+const URL = `http://127.0.0.1:${PORT}/`
 
 const sections = [
   ['overview', 'Overview'],

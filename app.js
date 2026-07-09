@@ -991,9 +991,27 @@ function openBudgetDialog(budget) {
 
 function bindEvents() {
   document.addEventListener('click', async (event) => {
+    const moreMenuBtn = event.target.closest('#moreMenuBtn')
+    if (moreMenuBtn) {
+      const dialog = $('moreMenuDialog')
+      if (dialog && !dialog.open) dialog.showModal()
+      return
+    }
+
+    const closeMoreMenu = event.target.closest('#closeMoreMenu')
+    if (closeMoreMenu) {
+      event.preventDefault()
+      const dialog = $('moreMenuDialog')
+      if (dialog) dialog.close()
+      return
+    }
+
     const viewButton = event.target.closest('[data-view]')
     if (viewButton) {
       showView(viewButton.dataset.view)
+      // Close the more menu modal if it's open
+      const moreDialog = $('moreMenuDialog')
+      if (moreDialog && moreDialog.open) moreDialog.close()
       return
     }
 

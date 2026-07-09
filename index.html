@@ -277,16 +277,26 @@
     </div>
 
     <nav class="bottom-tabs" id="bottomTabs" aria-label="Mobile navigation">
-      <button data-view="overview" class="active"><span>Overview</span></button>
-      <button data-view="transactions"><span>Ledger</span></button>
-      <button data-view="budgets"><span>Budgets</span></button>
-      <button data-view="cashflow"><span>Flow</span></button>
-      <button data-view="subscriptions"><span>Subs</span></button>
-      <button data-view="accounts"><span>Accounts</span></button>
-      <button data-view="documents"><span>Docs</span></button>
-      <button data-view="taxes"><span>Taxes</span></button>
-      <button data-view="automation"><span>Rules</span></button>
-      <button data-view="connections"><span>Links</span></button>
+      <button data-view="overview" class="active" title="Overview">
+        <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z" /></svg>
+        <span>Overview</span>
+      </button>
+      <button data-view="transactions" title="Transactions">
+        <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+        <span>Ledger</span>
+      </button>
+      <button data-view="budgets" title="Budgets">
+        <svg viewBox="0 0 24 24"><path d="M4 18V6m5 12V9m5 9V4m5 14v-6" /></svg>
+        <span>Budgets</span>
+      </button>
+      <button data-view="accounts" title="Accounts">
+        <svg viewBox="0 0 24 24"><path d="M3.5 9 12 4l8.5 5" /><path d="M5 9v9h14V9M9 18v-6h6v6" /></svg>
+        <span>Accounts</span>
+      </button>
+      <button id="moreMenuBtn" title="More options">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /><circle cx="5" cy="12" r="2" /></svg>
+        <span>More</span>
+      </button>
     </nav>
 
     <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
@@ -376,6 +386,41 @@
           <button class="primary-button" value="default">Save</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="moreMenuDialog" class="dialog small">
+      <div class="dialog-head">
+        <div><span class="label">Navigation</span><h2>More options</h2></div>
+        <button class="icon-action" id="closeMoreMenu" aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+      <nav class="more-menu-list">
+        <button data-view="cashflow" class="more-menu-item">
+          <svg viewBox="0 0 24 24"><path d="M4 17h16M7 14l4-4 3 3 4-6" /></svg>
+          <span>Cashflow</span>
+        </button>
+        <button data-view="subscriptions" class="more-menu-item">
+          <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z" /><path d="M4 10h3M17 10h3M4 14h3M17 14h3" /></svg>
+          <span>Subscriptions</span>
+        </button>
+        <button data-view="documents" class="more-menu-item">
+          <svg viewBox="0 0 24 24"><path d="M7 3.5h7l3 3V20H7z" /><path d="M14 3.5v3h3M9.5 11h5M9.5 15h5" /></svg>
+          <span>Documents</span>
+        </button>
+        <button data-view="taxes" class="more-menu-item">
+          <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6z" /><path d="M9 8h6M9 12h6M9 16h3" /></svg>
+          <span>Taxes</span>
+        </button>
+        <button data-view="automation" class="more-menu-item">
+          <svg viewBox="0 0 24 24"><path d="M7 8h10M7 16h10" /><path d="m15 5 3 3-3 3M9 13l-3 3 3 3" /></svg>
+          <span>Automation</span>
+        </button>
+        <button data-view="connections" class="more-menu-item">
+          <svg viewBox="0 0 24 24"><path d="M7.5 12a4.5 4.5 0 0 1 4.5-4.5h2" /><path d="M16.5 12A4.5 4.5 0 0 1 12 16.5h-2" /><path d="M14 7.5h3.5V4M10 16.5H6.5V20" /></svg>
+          <span>Connections</span>
+        </button>
+      </nav>
     </dialog>
 
     <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>

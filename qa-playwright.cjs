@@ -39,8 +39,18 @@ async function openView(page, view, title, mode) {
   if (mode === 'desktop') {
     await page.locator(`.sidebar [data-view="${view}"]`).click()
   } else {
-    await page.locator(`.bottom-tabs [data-view="${view}"]`).scrollIntoViewIfNeeded()
-    await page.locator(`.bottom-tabs [data-view="${view}"]`).click()
+    // On mobile, some views are in the bottom tabs, others are in the More menu
+    const directViews = ['overview', 'transactions', 'budgets', 'accounts']
+    const moreMenuViews = ['cashflow', 'subscriptions', 'documents', 'taxes', 'automation', 'connections']
+
+    if (directViews.includes(view)) {
+      // Click directly from bottom tabs
+      await page.locator(`.bottom-tabs [data-view="${view}"]`).click()
+    } else if (moreMenuViews.includes(view)) {
+      // Open More menu first
+      await page.locator('#moreMenuBtn').click()
+      await page.locator(`.more-menu-item[data-view="${view}"]`).click()
+    }
   }
   await waitForTitle(page, title)
   await page.waitForTimeout(220)

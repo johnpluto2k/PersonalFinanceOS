@@ -4,15 +4,20 @@
 
 ## Features
 
-| Feature | Status | Details |
-| --- | --- | --- |
-| **Charts & Net Worth History** | ✅ | 1M/3M/1Y/All time range, cashflow monthly bars, category spending donuts |
-| **Budgets & Spending Insights** | ✅ | Per-category monthly limits, progress bars with cap colors, top merchants, month-over-month deltas |
-| **Rules & Automation** | ✅ | Merchant pattern matching → auto-categorize, recurring transaction detection, subscriptions panel with estimated totals |
-| **Bank Connect (Plaid)** | ✅ | Streamlined link flow, incremental sync with cursor-based pagination, multi-account support |
-| **Apple Card Import** | ✅ | Export CSV from Wallet/card.apple.com, post to backend for instant import |
-| **Manual Accounts** | ✅ | Add accounts without a provider (savings, loans, investments tracked offline) |
-| **Transaction Management** | ✅ | Unified ledger, click-to-recategorize, CSV export, action queue for overages and sync alerts |
+| Feature | Status | UI/UX | Details |
+| --- | --- | --- | --- |
+| **Charts & Net Worth History** | ✅ | Modern | 1M/3M/1Y/All range, cashflow monthly bars, category donuts, account balance history |
+| **Budgets & Spending Insights** | ✅ | Polish | Category limits, animated progress bars, color-coded status, MoM deltas, top merchants |
+| **Rules & Automation** | ✅ | Polish | Merchant patterns → auto-categorize, recurring detection, subscription panel, inline rule creation |
+| **Bank Connect (Plaid)** | ✅ | Modern | Streamlined QR link flow, cursor-based sync, multi-account, connection management |
+| **Apple Card Import** | ✅ | Polish | CSV export from Wallet, instant import, toast confirmation, transaction categorization |
+| **Manual Accounts** | ✅ | Modern | Add/edit offline accounts (savings, loans, investments), balance tracking |
+| **Transaction Management** | ✅ | Modern | Unified ledger, sortable table, category chips, inline recategorize, heatmap, CSV export |
+| **Dark Fintech Dashboard** | ✅ | Premium | Electric green accents, near-black backgrounds, 8px grid, tabular numerals, smooth transitions |
+| **Mobile-First Responsive** | ✅ | Premium | Bottom tab bar, responsive charts, 44px+ touch targets, bottom-sheet modals, no horizontal scroll |
+| **Keyboard Shortcuts** | ✅ | Power | `/` search, `g+section` nav, `?` help, `Esc` close, organized help modal |
+| **Loading & Empty States** | ✅ | Polish | Skeleton loaders, friendly empty states with CTAs, smooth animations |
+| **Toast Notifications** | ✅ | Polish | Import/rule/budget feedback, slide-in animations, auto-dismiss |
 
 ## Quick Start
 
@@ -299,14 +304,73 @@ export async function sync(accessToken, lastCursor) {
 
 Add your adapter, update `server.mjs` to wire it, and extend the UI connection flow.
 
-## Project Status
+## v2.0.0 Release Status
 
-**v2 Build** (as of 2026-07-09):
-- ✅ Dark fintech dashboard redesign (modern, accessible, responsive)
-- ✅ Features 1–4 (Charts, Budgets, Rules, Plaid)
-- 📋 Features 5+ (see `NEXT-PROMPT.md` for roadmap: Tax, Documents, Quality pass)
+**✅ SHIPPED** (2026-07-09)
 
-See `NEXT-PROMPT.md` for full vision and future work.
+### What's New in v2
+
+**Phase 1 — Design System** (Commit a51cae6)
+- CSS tokens: colors, spacing, typography, transitions
+- Mobile bottom tab bar (desktop sidebar retained)
+- Card refinement: 1px borders, hover effects, consistent spacing
+- Typography: system stack, tabular numerals on all currency
+
+**Phase 2 — Charts & Data** (Commit 8cee70e)
+- Chart.js integration (6 views: net worth line, budget bars, cashflow stacked, transactions heatmap, accounts multi-line, subscriptions recurring)
+- Account balance history endpoint (`GET /api/accounts/:id/history?range=1M|3M|1Y|All`)
+- Interactive tooltips, range selectors, smooth animations
+- Budget delta sign bug fixed
+
+**Phase 3 — UX Polish** (Commit 46db87e)
+- Loading skeletons (shimmer animations on all charts/cards)
+- Empty states (friendly CTAs for all 10 views)
+- Transaction table enhancements (category chips, inline recategorize, sortable, heatmap strip)
+- Toast notifications (import/rule/budget feedback)
+- Keyboard shortcuts (navigation chords, search, help modal)
+- Micro-interactions (number animations, section fades, button ripples)
+- Mobile optimizations (responsive, 44px targets, bottom sheets, internal table scrolling)
+- Accessibility (WCAG AA contrast, focus rings, prefers-reduced-motion support)
+
+### Design System Reference
+
+**Colors** (CSS variables in `styles.css`):
+- `--bg-primary`: #0A0A0B (near-black)
+- `--bg-elevated`: #1A1A1E (card background)
+- `--accent`: #3DCF8E (electric green, primary actions)
+- `--semantic-positive`: #3DCF8E (income, ok budgets)
+- `--semantic-negative`: #FF4545 (expenses, over budgets)
+- `--text-primary`: #FFFFFF (main text)
+- `--text-secondary`: #A0A0A0 (muted text)
+
+**Spacing** (8px grid):
+- `--space-xs`: 4px
+- `--space-sm`: 8px
+- `--space-md`: 16px
+- `--space-lg`: 24px
+- `--space-xl`: 32px
+
+**Typography**:
+- `--font-body`: Inter, -apple-system, system-ui, sans-serif
+- `--font-size-sm`: 12px (labels)
+- `--font-size-base`: 13px (body)
+- `--font-size-lg`: 16px (subheadings)
+- `--font-size-xl`: 20px (headings)
+- `--font-size-2xl`: 28px (hero numbers)
+- Tabular numerals on all `.amount`, `.price`, `.balance`, `.money` classes
+
+**Transitions**:
+- `--transition-fast`: 150ms ease (hover, focus)
+- `--transition-normal`: 200ms ease (section switches, modals)
+
+## Roadmap (v3+)
+
+See `NEXT-PROMPT.md` for full vision:
+- Tax prep deepening (estimated payments, deduction tracker)
+- Documents management (checklist, years, verification)
+- Search & filters (transactions, date ranges, amount bounds)
+- CSV export (downloadable ledger)
+- Quality pass (accessibility, performance, edge cases)
 
 ## License
 

@@ -873,6 +873,15 @@ function connectionRow(conn) {
   const tone = status === 'active' ? 'good' : status === 'error' ? 'bad' : 'warn'
   const synced = conn.lastSyncedAt ? `Synced ${humanizeTime(conn.lastSyncedAt)}` : 'Not synced yet'
   const provider = conn.provider || 'provider'
+  // Old cached rows may lack the resilience fields — treat them as healthy.
+  const health = conn.health === 'degraded' || conn.health === 'down' ? conn.health : 'healthy'
+  const healthChip = health === 'healthy'
+    ? ''
+    : `<span class="chip ${health === 'down' ? 'bad' : 'warn'}">${escapeHtml(health)}</span>`
+  const failures = Number(conn.consecutiveFailures || 0)
+  const healthDetail = health === 'healthy'
+    ? ''
+    : `<p class="conn-health-detail">${escapeHtml(`${conn.lastErrorClass || 'unknown'} · ${failures} failure${failures === 1 ? '' : 's'} · last sync ${conn.lastSyncedAt ? humanizeTime(conn.lastSyncedAt) : 'never'}`)}</p>`
   const errorChip = conn.lastError
     ? `<span class="chip bad conn-error" title="${escapeHtml(conn.lastError)}">${escapeHtml(conn.lastError)}</span>`
     : ''
@@ -882,8 +891,10 @@ function connectionRow(conn) {
         <div class="conn-head">
           <strong>${escapeHtml(conn.displayName || provider)}</strong>
           <span class="chip ${tone}">${escapeHtml(status)}</span>
+          ${healthChip}
         </div>
         <p>${escapeHtml(`${provider} | ${synced}`)}</p>
+        ${healthDetail}
         ${errorChip}
       </div>
       <div class="card-actions conn-actions">
@@ -892,6 +903,30 @@ function connectionRow(conn) {
       </div>
     </div>
   `
+}
+
+// Succinct manual-sync summary: "Demo Bank synced · Plaid failed (provider-down)".
+function syncResultsToast(results) {
+  if (!results?.length) {
+    toast('No linked providers to sync.')
+    return
+  }
+  const nameOf = (result) => {
+    const conn = state.connections.find((c) => c.id === result.connectionId)
+    return conn?.displayName || result.connectionId || 'Connection'
+  }
+  const failed = results.filter((r) => r.ok === false)
+  if (!failed.length) {
+    toast('Sync completed.')
+    return
+  }
+  const okText = results.filter((r) => r.ok !== false).map((r) => `${nameOf(r)} synced`).join(' · ')
+  // Keep the provider's human error message, but stay one-line-ish: only the
+  // first failure carries its message; further failures collapse to "+N more".
+  const first = failed[0]
+  const firstText = `${nameOf(first)} failed (${first.errorClass || 'unknown'})${first.error ? `: ${first.error}` : ''}`
+  const failedText = failed.length > 1 ? `${firstText} +${failed.length - 1} more` : firstText
+  toast(okText ? `${okText} · ${failedText}` : failedText, 'error')
 }
 
 function firstDirectProvider() {
@@ -1399,9 +1434,7 @@ function bindEvents() {
       connSync.disabled = true
       try {
         const res = await post('/api/sync', { connectionId: connSync.dataset.id })
-        const failed = res.results?.filter((r) => r.ok === false)
-        if (failed?.length) toast(failed[0].error || 'Sync failed.', 'error')
-        else toast('Sync completed.')
+        syncResultsToast(res.results)
         await load({ quiet: true })
       } catch (err) {
         toast(err.message, 'error')
@@ -1429,16 +1462,17 @@ function bindEvents() {
       return
     }
 
-    if (event.target.closest('#syncBtn')) {
+    const syncBtn = event.target.closest('#syncBtn')
+    if (syncBtn) {
+      syncBtn.disabled = true
       try {
         const res = await post('/api/sync', {})
-        const failed = res.results?.filter((r) => r.ok === false)
-        if (!res.results?.length) toast('No linked providers to sync.')
-        else if (failed?.length) toast(failed[0].error || 'Sync failed.', 'error')
-        else toast('Sync completed.')
+        syncResultsToast(res.results)
         await load({ quiet: true })
       } catch (err) {
         toast(err.message, 'error')
+      } finally {
+        syncBtn.disabled = false
       }
     }
 

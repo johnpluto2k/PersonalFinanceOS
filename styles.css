@@ -1362,6 +1362,12 @@ label {
   text-overflow: ellipsis;
 }
 
+/* Sync-health diagnostic line ("provider-down · 3 failures · last sync 3d ago")
+   on degraded/down connections; must wrap freely inside the row at 390px. */
+.conn-health-detail {
+  overflow-wrap: anywhere;
+}
+
 .conn-actions {
   margin-top: 0;
   flex: 0 0 auto;

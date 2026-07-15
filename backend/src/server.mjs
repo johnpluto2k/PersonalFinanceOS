@@ -5,6 +5,7 @@ import path from 'node:path'
 import { config } from './config.mjs'
 import { parseAppleCardCsv } from './appleCardImport.mjs'
 import { getProvider, listProviders } from './providers/index.mjs'
+import { clearSyncFailures, syncWithRetry } from './syncEngine.mjs'
 import {
   actionQueue,
   addSyncEvent,
@@ -14,6 +15,7 @@ import {
   deleteBudget,
   deleteConnection,
   deleteRule,
+  deriveHealth,
   listCashflow,
   listBudgets,
   listCategories,
@@ -117,6 +119,9 @@ function publicConnection(connection) {
     hasCursor: Boolean(connection.cursor),
     lastSyncedAt: connection.lastSyncAt || null,
     lastError: connection.lastError || null,
+    lastErrorClass: connection.lastErrorClass || null,
+    consecutiveFailures: Number(connection.consecutiveFailures || 0),
+    health: deriveHealth(connection),
   }
 }
 
@@ -335,6 +340,11 @@ async function handle(req, res) {
       if (!body.public_token) return send(res, 400, { error: 'public_token is required' })
       const db = readDb()
       const connection = await provider.exchangePublicToken(db, body.public_token, body.metadata || {})
+      // A successful (re-)link is a fresh start for resilience bookkeeping —
+      // without this reset a 'down' connection would stay 'down' until the
+      // next good sync. Done here so every provider gets it.
+      const linked = db.connections.find((c) => c.id === connection.id)
+      if (linked) clearSyncFailures(linked)
       writeDb(db)
       captureSnapshot(`${provider.id}_link`)
       return send(res, 201, connection)
@@ -366,17 +376,14 @@ async function handle(req, res) {
         (c) => getProvider(c.provider) && c.status === 'active' && (!targetId || c.id === targetId),
       )
       const results = []
-      // One failing connection must not abort the whole loop: capture its error onto
-      // the connection (persisted via writeDb -> upsertConnection.last_error) and keep
-      // syncing the rest. Each adapter's syncConnection clears last_error on success.
+      // One failing connection must not abort the whole loop: syncWithRetry never
+      // throws — it classifies the error, retries only transient classes with
+      // bounded backoff, records lastError/lastErrorClass/consecutiveFailures on
+      // the connection (persisted via writeDb -> upsertConnection), and returns a
+      // structured {ok:false, errorClass, attempts} result. Success resets the
+      // failure bookkeeping.
       for (const connection of targets) {
-        try {
-          results.push(await getProvider(connection.provider).syncConnection(db, connection))
-        } catch (err) {
-          connection.lastError = err.message || 'Sync failed'
-          connection.updatedAt = new Date().toISOString()
-          results.push({ connectionId: connection.id, ok: false, error: connection.lastError })
-        }
+        results.push(await syncWithRetry(db, connection))
       }
       db.syncEvents.push({
         id: `sync_${crypto.randomUUID()}`,

@@ -34,7 +34,7 @@ http://127.0.0.1:8787/
 | `GET` | `/health` | Server and storage health |
 | `GET` | `/api/summary` | Net worth, assets, debt, transaction counts |
 | `GET` | `/api/accounts` | Stored accounts |
-| `GET` | `/api/connections` | Linked provider connections with sync status (`lastSyncedAt`, `lastError`) |
+| `GET` | `/api/connections` | Linked provider connections with sync status (`lastSyncedAt`, `lastError`) and health fields: `health` (`healthy`/`degraded`/`down`), `consecutiveFailures`, `lastErrorClass` |
 | `DELETE` | `/api/connections/:id` | Unlink a connection and remove only its provider-linked accounts and transactions (manual + Apple import data untouched) |
 | `GET` | `/api/transactions?limit=100` | Unified transaction ledger |
 | `GET` | `/api/transactions.csv` | CSV export of the unified ledger |
@@ -61,7 +61,7 @@ http://127.0.0.1:8787/
 | `POST` | `/api/providers/:provider/check` | Structured health check: `configured`/`ok`/error code; never throws. 404 for unknown provider |
 | `POST` | `/api/providers/:provider/link-token` | Create a link token for any registered provider (`/api/providers/plaid/link-token` unchanged) |
 | `POST` | `/api/providers/:provider/exchange-public-token` | Exchange a public token and store the encrypted access token (`/api/providers/plaid/exchange-public-token` unchanged) |
-| `POST` | `/api/sync` | Sync linked provider accounts; optional JSON body `{ connectionId }` syncs just that connection, otherwise all active connections of every registered provider |
+| `POST` | `/api/sync` | Sync linked provider accounts; optional JSON body `{ connectionId }` syncs just that connection, otherwise all active connections of every registered provider. Each connection syncs through the resilient sync engine: errors are classified (`config`/`auth`/`rate-limit`/`provider-down`/`unknown`), transient classes (`provider-down`, `rate-limit`) retry up to 3 attempts with exponential backoff + half jitter (~500ms base, 2s cap), permanent classes fail fast, and failures never abort other connections. Failed result entries carry `errorClass` and `attempts`; consecutive failures drive the connection `health` field |
 | `POST` | `/api/webhooks/plaid` | Plaid webhook receiver stub |
 
 ## Apple Card import

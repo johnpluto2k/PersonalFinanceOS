@@ -9,7 +9,7 @@ const baseByEnv = {
 }
 
 function plaidBaseUrl() {
-  return baseByEnv[config.plaid.env] || baseByEnv.sandbox
+  return config.plaid.baseUrl || baseByEnv[config.plaid.env] || baseByEnv.sandbox
 }
 
 function ensurePlaidConfigured() {

@@ -259,8 +259,10 @@ export async function syncConnection(db, connection) {
   // Exercise the real decryption path exactly like the Plaid adapter does.
   const accessToken = decryptSecret(connection.token)
   if (accessToken !== MOCK_ACCESS_TOKEN) {
+    // 401 = invalid access token, so syncEngine classifies it as 'auth'
+    // (remediation: re-link), matching what a real provider would return.
     const err = new Error('mock access token is invalid; re-link Demo Bank')
-    err.status = 400
+    err.status = 401
     throw err
   }
 

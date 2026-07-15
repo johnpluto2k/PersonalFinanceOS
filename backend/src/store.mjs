@@ -262,6 +262,10 @@ function migrate(con) {
   // idempotent and never throws a "duplicate column name" on the current schema.
   ensureColumn(con, 'connections', 'last_sync_at', 'TEXT')
   ensureColumn(con, 'connections', 'last_error', 'TEXT')
+  // Feature 2 (resilient sync): per-connection failure bookkeeping written by
+  // syncEngine.syncWithRetry. Additive + idempotent on existing DB files.
+  ensureColumn(con, 'connections', 'consecutive_failures', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(con, 'connections', 'last_error_class', 'TEXT')
 
   // Rules dedup maintenance. ORDERING IS CRITICAL: collapse duplicate patterns
   // FIRST, then create the UNIQUE guard index. The current live DB may hold
@@ -584,9 +588,37 @@ function connectionFromRow(row) {
     status: row.status,
     lastSyncAt: row.last_sync_at,
     lastError: row.last_error,
+    lastErrorClass: row.last_error_class || null,
+    consecutiveFailures: Number(row.consecutive_failures || 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+// Connection health from consecutive sync failures. Defined here (bottom of
+// the dependency graph) so actionQueue can use it without an import cycle;
+// server-level code imports it from here directly.
+// Keep this in lockstep with syncEngine's retry semantics.
+export function deriveHealth(connection) {
+  const failures = Number(connection?.consecutiveFailures || 0)
+  if (failures >= 3) return 'down'
+  if (failures >= 1) return 'degraded'
+  return 'healthy'
+}
+
+// "3d ago" / "5h ago" / "12m ago" / "just now"; null lastSyncAt -> "never".
+// Rounding matches app.js humanizeTime (Math.round) so the action-queue item
+// and the connection card agree about the same timestamp.
+function humanizeSyncAge(lastSyncAt) {
+  if (!lastSyncAt) return 'never'
+  const ms = Date.now() - new Date(lastSyncAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return 'just now'
+  const minutes = Math.round(ms / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
 }
 
 function accountFromRow(row) {
@@ -774,8 +806,10 @@ export function upsertConnection(connection) {
   const con = db()
   const now = nowIso()
   con.prepare(`INSERT INTO connections
-    (id, provider, provider_item_id, display_name, cursor, token_json, status, last_sync_at, last_error, created_at, updated_at)
-    VALUES (@id, @provider, @providerItemId, @displayName, @cursor, @tokenJson, @status, @lastSyncAt, @lastError, @createdAt, @updatedAt)
+    (id, provider, provider_item_id, display_name, cursor, token_json, status, last_sync_at, last_error,
+     last_error_class, consecutive_failures, created_at, updated_at)
+    VALUES (@id, @provider, @providerItemId, @displayName, @cursor, @tokenJson, @status, @lastSyncAt, @lastError,
+     @lastErrorClass, @consecutiveFailures, @createdAt, @updatedAt)
     ON CONFLICT(id) DO UPDATE SET
       provider=excluded.provider,
       provider_item_id=excluded.provider_item_id,
@@ -785,6 +819,8 @@ export function upsertConnection(connection) {
       status=excluded.status,
       last_sync_at=excluded.last_sync_at,
       last_error=excluded.last_error,
+      last_error_class=excluded.last_error_class,
+      consecutive_failures=excluded.consecutive_failures,
       updated_at=excluded.updated_at`).run({
     id: connection.id,
     provider: connection.provider,
@@ -795,6 +831,8 @@ export function upsertConnection(connection) {
     status: connection.status || 'active',
     lastSyncAt: connection.lastSyncAt || connection.last_sync_at || null,
     lastError: connection.lastError || connection.last_error || null,
+    lastErrorClass: connection.lastErrorClass || connection.last_error_class || null,
+    consecutiveFailures: Number(connection.consecutiveFailures ?? connection.consecutive_failures ?? 0),
     createdAt: connection.createdAt || now,
     updatedAt: now,
   })
@@ -1295,6 +1333,28 @@ export function actionQueue() {
   const inDays = (dateText) => {
     if (!dateText) return 9999
     return Math.ceil((new Date(`${dateText}T00:00:00`) - today) / 86400000)
+  }
+
+  // Connection sync health: 'down' (>=3 consecutive failures) outranks
+  // 'degraded' (1-2) via priority high vs medium. Only active connections can
+  // sync (mirrors /api/sync's target filter), so only they can surface here —
+  // an unlinked/errored one would otherwise be a permanent unclearable action.
+  for (const connection of snapshot.connections) {
+    if (connection.status !== 'active') continue
+    const health = deriveHealth(connection)
+    if (health === 'healthy') continue
+    const failures = Number(connection.consecutiveFailures || 0)
+    const age = humanizeSyncAge(connection.lastSyncAt)
+    actions.push({
+      id: `connection_${connection.id}`,
+      type: 'connection',
+      priority: health === 'down' ? 'high' : 'medium',
+      title: health === 'down'
+        ? `${connection.displayName} sync down — last sync ${age}`
+        : `${connection.displayName} sync degraded — ${failures} failure${failures === 1 ? '' : 's'}`,
+      detail: `${connection.lastError || 'Sync is failing'} (${failures} consecutive failure${failures === 1 ? '' : 's'}, last sync ${age}).`,
+      dueDate: null,
+    })
   }
 
   for (const account of snapshot.accounts) {

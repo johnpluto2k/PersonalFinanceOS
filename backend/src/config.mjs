@@ -28,6 +28,10 @@ export const config = {
   masterKey: process.env.PFOS_MASTER_KEY || '',
   plaid: {
     env: process.env.PLAID_ENV || 'sandbox',
+    // Optional API base override (testing/self-hosted proxies). Empty = use the
+    // standard per-environment Plaid host; no behavior change when unset.
+    // Trailing slashes are stripped so `${base}${path}` never double-slashes.
+    baseUrl: (process.env.PLAID_BASE_URL || '').replace(/\/+$/, ''),
     clientId: process.env.PLAID_CLIENT_ID || '',
     secret: process.env.PLAID_SECRET || '',
     products: (process.env.PLAID_PRODUCTS || 'transactions,auth,liabilities,investments')

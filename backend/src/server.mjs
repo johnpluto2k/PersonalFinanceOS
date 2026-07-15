@@ -7,6 +7,7 @@ import { parseAppleCardCsv } from './appleCardImport.mjs'
 import { getProvider, listProviders } from './providers/index.mjs'
 import { clearSyncFailures, syncWithRetry } from './syncEngine.mjs'
 import {
+  accountHistory,
   actionQueue,
   addSyncEvent,
   captureSnapshot,
@@ -166,6 +167,16 @@ async function handle(req, res) {
     if (req.method === 'GET' && url.pathname === '/api/accounts') {
       const db = readDb()
       return send(res, 200, db.accounts)
+    }
+
+    // Per-account balance history for the Accounts chart. accountHistory throws
+    // 404 (unknown account) / 400 (unknown range), surfaced via the catch below.
+    const accountHistoryMatch = url.pathname.match(/^\/api\/accounts\/([^/]+)\/history$/)
+    if (accountHistoryMatch && req.method === 'GET') {
+      return send(res, 200, accountHistory(
+        decodeURIComponent(accountHistoryMatch[1]),
+        url.searchParams.get('range') || '1Y',
+      ))
     }
 
     if (req.method === 'GET' && url.pathname === '/api/connections') {

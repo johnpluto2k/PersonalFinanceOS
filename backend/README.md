@@ -34,6 +34,7 @@ http://127.0.0.1:8787/
 | `GET` | `/health` | Server and storage health |
 | `GET` | `/api/summary` | Net worth, assets, debt, transaction counts |
 | `GET` | `/api/accounts` | Stored accounts |
+| `GET` | `/api/accounts/:id/history?range=1M\|3M\|1Y\|All` | Per-account balance history as `{ accountId, range, kind, currency, snapshots: [{ date, balance }] }`, reconstructed backward from the current balance through the account's transactions (asset kinds move by `-amount`, credit/debt kinds by `+amount`; integer-cent math). Always includes a point for today equal to the current balance, so an account with no in-range transactions still charts a flat line. `404` unknown account, `400` unknown range |
 | `GET` | `/api/connections` | Linked provider connections with sync status (`lastSyncedAt`, `lastError`) and health fields: `health` (`healthy`/`degraded`/`down`), `consecutiveFailures`, `lastErrorClass` |
 | `DELETE` | `/api/connections/:id` | Unlink a connection and remove only its provider-linked accounts and transactions (manual + Apple import data untouched) |
 | `GET` | `/api/transactions?limit=100` | Unified transaction ledger |

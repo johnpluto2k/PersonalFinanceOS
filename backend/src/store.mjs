@@ -1050,11 +1050,14 @@ export function captureSnapshot(source = 'system') {
   return con.prepare('SELECT * FROM snapshots WHERE date = ?').get(date)
 }
 
+// Shared range windows for history endpoints (days of lookback per range key).
+const HISTORY_RANGE_DAYS = { '1M': 35, '3M': 100, '1Y': 370, ALL: 10000 }
+
 export function listHistory(range = '1Y') {
   const con = db()
   const rows = con.prepare('SELECT * FROM snapshots ORDER BY date ASC').all().map(snapshotFromRow)
   const latest = rows.at(-1)?.date || todayText()
-  const days = { '1M': 35, '3M': 100, '1Y': 370, ALL: 10000 }[String(range || '1Y').toUpperCase()] || 370
+  const days = HISTORY_RANGE_DAYS[String(range || '1Y').toUpperCase()] || 370
   const cutoff = new Date(`${latest}T00:00:00Z`)
   cutoff.setUTCDate(cutoff.getUTCDate() - days)
   const snapshots = rows.filter((row) => new Date(`${row.date}T00:00:00Z`) >= cutoff)
@@ -1063,6 +1066,84 @@ export function listHistory(range = '1Y') {
     snapshots,
     cashflow: listCashflow().slice().reverse(),
     categories: categorySpendForMonth(latestTransactionMonth()),
+  }
+}
+
+// Per-account balance history reconstructed backward from the CURRENT balance
+// through that account's transactions — no per-account snapshot table needed,
+// and the newest point always reconciles exactly with /api/accounts.
+//
+// Sign convention (matches the mock/Plaid adapters and the demo seed):
+// positive amount = money OUT. Asset balances move by -amount per transaction,
+// debt/credit (owed) balances by +amount, so walking BACKWARD the pre-tx
+// balance is `after + amount` for assets and `after - amount` for debt kinds.
+// All math is done in integer cents to avoid float drift across hundreds of
+// REAL-typed amounts.
+//
+// Returns { accountId, range, kind, currency, snapshots: [{ date, balance }] }
+// with one end-of-day point per transaction date inside the window plus a
+// point for today at the current balance — an account with no transactions in
+// range still yields that single point, so charts render a flat line instead
+// of nothing. Throws 404 for an unknown account, 400 for an unknown range.
+export function accountHistory(accountId, range = '1Y') {
+  const rangeKey = String(range || '1Y').toUpperCase()
+  const days = HISTORY_RANGE_DAYS[rangeKey]
+  if (!days) {
+    const err = new Error(`invalid range: ${range} (expected 1M, 3M, 1Y, or All)`)
+    err.status = 400
+    throw err
+  }
+
+  const con = db()
+  const row = con.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
+  if (!row) {
+    const err = new Error('account not found')
+    err.status = 404
+    throw err
+  }
+  const account = accountFromRow(row)
+  const isDebt = DEBT_KINDS.includes(account.kind)
+  const endDate = todayText()
+  const startDate = addDaysText(endDate, -days)
+
+  // Newest-first so the backward walk from the current balance is a single pass.
+  const txs = con.prepare(`SELECT date, amount FROM transactions
+    WHERE account_id = ? AND date IS NOT NULL AND date != ''
+    ORDER BY date DESC, created_at DESC`).all(accountId)
+
+  let runningCents = Math.round(Number(account.balance || 0) * 100)
+  let i = 0
+  // Reverse any future-dated rows (> today) first, so the "today" point shows
+  // the as-of-today balance rather than one inflated by not-yet-effective rows.
+  while (i < txs.length && String(txs[i].date).slice(0, 10) > endDate) {
+    const amountCents = Math.round(Number(txs[i].amount || 0) * 100)
+    runningCents += isDebt ? -amountCents : amountCents
+    i += 1
+  }
+  const newestFirst = [{ date: endDate, cents: runningCents }]
+  while (i < txs.length) {
+    const date = String(txs[i].date).slice(0, 10)
+    if (date < startDate) break
+    // `runningCents` currently reflects the balance with every LATER date
+    // already reversed, i.e. this date's end-of-day balance — record it before
+    // reversing this date's own transactions. (date === endDate is already
+    // covered by the seeded "today" point above.)
+    if (date < endDate) newestFirst.push({ date, cents: runningCents })
+    while (i < txs.length && String(txs[i].date).slice(0, 10) === date) {
+      const amountCents = Math.round(Number(txs[i].amount || 0) * 100)
+      runningCents += isDebt ? -amountCents : amountCents
+      i += 1
+    }
+  }
+
+  return {
+    accountId: account.id,
+    range: rangeKey === 'ALL' ? 'All' : rangeKey,
+    kind: account.kind,
+    currency: account.currency,
+    snapshots: newestFirst
+      .reverse()
+      .map((point) => ({ date: point.date, balance: point.cents / 100 })),
   }
 }
 

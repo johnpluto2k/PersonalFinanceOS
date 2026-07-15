@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { config } from './config.mjs'
 import { parseAppleCardCsv } from './appleCardImport.mjs'
-import { createLinkToken, exchangePublicToken, syncPlaidConnection } from './providers/plaid.mjs'
+import { getProvider, listProviders } from './providers/index.mjs'
 import {
   actionQueue,
   addSyncEvent,
@@ -309,18 +309,34 @@ async function handle(req, res) {
       return send(res, 201, { imported: txs.length, accountId: 'apple_card_manual' })
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/providers/plaid/link-token') {
-      const token = await createLinkToken()
-      return send(res, 200, token)
+    if (req.method === 'GET' && url.pathname === '/api/providers') {
+      return send(res, 200, listProviders())
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/providers/plaid/exchange-public-token') {
+    // Generalized provider routes. /api/providers/plaid/* keeps its exact
+    // historical behavior — plaid is just one registry entry now.
+    const providerMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/(link-token|exchange-public-token|check)$/)
+    if (providerMatch && req.method === 'POST') {
+      const providerId = decodeURIComponent(providerMatch[1])
+      const action = providerMatch[2]
+      const provider = getProvider(providerId)
+      if (!provider) return send(res, 404, { error: `unknown provider: ${providerId}` })
+
+      if (action === 'check') {
+        return send(res, 200, await provider.check())
+      }
+
+      if (action === 'link-token') {
+        const token = await provider.createLinkToken()
+        return send(res, 200, token)
+      }
+
       const body = await readJson(req)
       if (!body.public_token) return send(res, 400, { error: 'public_token is required' })
       const db = readDb()
-      const connection = await exchangePublicToken(db, body.public_token, body.metadata || {})
+      const connection = await provider.exchangePublicToken(db, body.public_token, body.metadata || {})
       writeDb(db)
-      captureSnapshot('plaid_link')
+      captureSnapshot(`${provider.id}_link`)
       return send(res, 201, connection)
     }
 
@@ -330,29 +346,32 @@ async function handle(req, res) {
       const db = readDb()
       // A caller-supplied connectionId must resolve to a real, syncable connection.
       // Silently returning {results:[]} would mask a bad id or a disabled connection.
+      let targetConn = null
       if (targetId) {
-        const conn = db.connections.find((c) => c.id === targetId)
-        if (!conn) {
+        targetConn = db.connections.find((c) => c.id === targetId)
+        if (!targetConn) {
           const err = new Error('connection not found')
           err.status = 404
           throw err
         }
-        if (conn.provider !== 'plaid' || conn.status !== 'active') {
-          const err = new Error('connection is not an active Plaid connection')
+        if (!getProvider(targetConn.provider) || targetConn.status !== 'active') {
+          const err = new Error('connection is not an active syncable connection')
           err.status = 400
           throw err
         }
       }
+      // Any registered provider's active connections sync; each connection is
+      // dispatched to its own adapter's syncConnection via the registry.
       const targets = db.connections.filter(
-        (c) => c.provider === 'plaid' && c.status === 'active' && (!targetId || c.id === targetId),
+        (c) => getProvider(c.provider) && c.status === 'active' && (!targetId || c.id === targetId),
       )
       const results = []
       // One failing connection must not abort the whole loop: capture its error onto
       // the connection (persisted via writeDb -> upsertConnection.last_error) and keep
-      // syncing the rest. syncPlaidConnection clears last_error on success.
+      // syncing the rest. Each adapter's syncConnection clears last_error on success.
       for (const connection of targets) {
         try {
-          results.push(await syncPlaidConnection(db, connection))
+          results.push(await getProvider(connection.provider).syncConnection(db, connection))
         } catch (err) {
           connection.lastError = err.message || 'Sync failed'
           connection.updatedAt = new Date().toISOString()
@@ -361,7 +380,7 @@ async function handle(req, res) {
       }
       db.syncEvents.push({
         id: `sync_${crypto.randomUUID()}`,
-        provider: targetId ? 'plaid' : 'all',
+        provider: targetConn ? targetConn.provider : 'all',
         connectionId: targetId,
         kind: 'manual_sync',
         payload: { connectionId: targetId, results },

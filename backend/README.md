@@ -57,9 +57,11 @@ http://127.0.0.1:8787/
 | `GET` | `/api/taxes` | Tax prep tasks |
 | `POST` | `/api/manual/accounts` | Add a manual account |
 | `POST` | `/api/import/apple-card` | Import Apple Card exported CSV text |
-| `POST` | `/api/providers/plaid/link-token` | Create a Plaid Link token |
-| `POST` | `/api/providers/plaid/exchange-public-token` | Store encrypted Plaid access token |
-| `POST` | `/api/sync` | Sync linked provider accounts; optional JSON body `{ connectionId }` syncs just that connection, otherwise all active Plaid connections |
+| `GET` | `/api/providers` | Registered providers with `{ id, label, configured, linkMode }`; `linkMode` is `sdk` (browser Plaid Link flow) or `direct` (plain link-token → exchange round-trip, e.g. `mock` "Demo Bank") |
+| `POST` | `/api/providers/:provider/check` | Structured health check: `configured`/`ok`/error code; never throws. 404 for unknown provider |
+| `POST` | `/api/providers/:provider/link-token` | Create a link token for any registered provider (`/api/providers/plaid/link-token` unchanged) |
+| `POST` | `/api/providers/:provider/exchange-public-token` | Exchange a public token and store the encrypted access token (`/api/providers/plaid/exchange-public-token` unchanged) |
+| `POST` | `/api/sync` | Sync linked provider accounts; optional JSON body `{ connectionId }` syncs just that connection, otherwise all active connections of every registered provider |
 | `POST` | `/api/webhooks/plaid` | Plaid webhook receiver stub |
 
 ## Apple Card import
@@ -76,6 +78,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8787/api/import/apple-card `
 ## Provider plan
 
 Plaid is the first adapter because it covers broad US bank/card/investment data and has Link, Transactions Sync, Liabilities, and Investments APIs. The adapter boundary is intentionally thin so Teller, MX, Finicity, SimpleFIN, or a custom CSV importer can be added without rewriting the rest of the app.
+
+Adapters live in `src/providers/` and register in `src/providers/index.mjs` with a uniform shape: `{ id, label, isConfigured(), createLinkToken(), exchangePublicToken(db, publicToken, metadata), syncConnection(db, connection), check() }`. The built-in `mock` adapter ("Demo Bank") needs no credentials: linking it seeds three accounts (Demo Checking, Demo Credit Card, Demo Brokerage) with ~12 months of deterministic transactions, its fake access token still flows through the real `cryptoVault` encryption path, and each subsequent `/api/sync` trickles 2-5 new transactions via a cursor exactly like Plaid's incremental sync.
 
 ## QA
 

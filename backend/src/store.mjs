@@ -958,10 +958,19 @@ export function listTaxTasks() {
   return db().prepare("SELECT * FROM tax_tasks ORDER BY COALESCE(due_date, '9999-99-99'), priority DESC").all().map(taxTaskFromRow)
 }
 
+// Category for movements between the user's OWN accounts (e.g. credit-card
+// autopay from checking, brokerage contributions). Both legs stay in the ledger
+// so per-account balances reconcile, but a transfer is neither income nor
+// spending, so cashflow/summary/category-spend/subscription aggregations must
+// skip it or every internal transfer inflates income AND spending by the same
+// amount each month.
+const TRANSFER_CATEGORY = 'Transfer'
+
 export function listCashflow() {
   const txs = listTransactions(5000)
   const byMonth = new Map()
   for (const tx of txs) {
+    if (tx.category === TRANSFER_CATEGORY) continue
     const month = monthText(tx.date)
     const bucket = byMonth.get(month) || { month, income: 0, spending: 0, net: 0, count: 0 }
     if (tx.amount < 0) bucket.income += Math.abs(tx.amount)
@@ -1023,10 +1032,10 @@ export function categorySpendForMonth(month = latestTransactionMonth()) {
   return db()
     .prepare(`SELECT COALESCE(category, 'Uncategorized') AS category, SUM(amount) AS total, COUNT(*) AS count
       FROM transactions
-      WHERE amount > 0 AND substr(date, 1, 7) = ?
+      WHERE amount > 0 AND substr(date, 1, 7) = ? AND COALESCE(category, '') != ?
       GROUP BY COALESCE(category, 'Uncategorized')
       ORDER BY total DESC`)
-    .all(month)
+    .all(month, TRANSFER_CATEGORY)
     .map((row) => ({
       category: row.category,
       total: Number(row.total || 0),
@@ -1224,7 +1233,9 @@ export function updateTransactionCategory(id, body = {}) {
 }
 
 export function listSubscriptions() {
-  const txs = listTransactions(5000).filter((tx) => tx.amount > 0)
+  // A recurring internal transfer (e.g. a fixed monthly brokerage contribution)
+  // is not a subscription; excluding TRANSFER_CATEGORY keeps it out of the list.
+  const txs = listTransactions(5000).filter((tx) => tx.amount > 0 && tx.category !== TRANSFER_CATEGORY)
   const groups = new Map()
   for (const tx of txs) {
     const key = (tx.merchant || tx.description || 'Unknown').toLowerCase()
@@ -1364,7 +1375,9 @@ export function summary(snapshot = readDb()) {
   const balances = balanceSummaryFromSnapshot(snapshot)
   const txs = snapshot.transactions
   const latestMonth = latestTransactionMonth()
-  const monthTxs = txs.filter((tx) => monthText(tx.date) === latestMonth)
+  // Internal transfers are excluded from income/spending: both legs live in the
+  // ledger for balance reconciliation but move no money in or out overall.
+  const monthTxs = txs.filter((tx) => monthText(tx.date) === latestMonth && tx.category !== TRANSFER_CATEGORY)
   const spending30 = monthTxs.filter((tx) => tx.amount > 0).reduce((sum, tx) => sum + tx.amount, 0)
   const income30 = monthTxs.filter((tx) => tx.amount < 0).reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
   const latestTxDate = txs.map((tx) => tx.date).filter(Boolean).sort().at(-1) || null

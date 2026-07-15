@@ -26,6 +26,10 @@ const state = {
   pendingDeleteRule: null,
   pendingUnlinkConnection: null,
   plaidLinking: false,
+  providers: [],
+  providerChecks: {},
+  providerChecking: null,
+  directLinking: null,
 }
 
 const checkSvg = '<svg viewBox="0 0 24 24"><path d="m5 13 4 4 10-11" /></svg>'
@@ -813,18 +817,33 @@ function renderOnboarding() {
   const plaidOk = !!state.health?.plaidConfigured
   const bankOk = state.connections.length > 0
   const done = [vaultOk, plaidOk, bankOk].filter(Boolean).length
-  if (done === 3) {
+  // Plaid keys are the optional credentialed path: once the vault is set and a
+  // bank is connected (Demo Bank counts), onboarding is complete. Without this,
+  // a demo-only user is pinned at 2/3 forever with no actionable CTA.
+  if (done === 3 || (vaultOk && bankOk)) {
     target.hidden = true
     target.innerHTML = ''
     return
   }
   target.hidden = false
-  const cta = plaidOk
+  const direct = firstDirectProvider()
+  const directLabel = direct?.label || 'Demo Bank'
+  const directConnected = direct ? isProviderConnected(direct.id) : false
+  const directBusy = direct ? state.directLinking === direct.id : false
+  const plaidBtn = plaidOk
     ? `<button class="primary-button connect-trigger" id="onboardConnectBtn">
         <svg viewBox="0 0 24 24"><path d="M3 10h18M6 6h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" /><path d="M15 15h2" /></svg>
         <span>Connect a bank</span>
       </button>`
-    : `<p class="onboard-hint">Bank linking unlocks once Plaid keys are set on the server.</p>`
+    : ''
+  const demoBtn = direct && !directConnected
+    ? `<button class="${plaidOk ? 'secondary-button' : 'primary-button'} provider-connect" id="onboardDemoBtn" data-provider="${escapeHtml(direct.id)}"${directBusy ? ' disabled' : ''}>${directBusy ? 'Connecting…' : `Try ${escapeHtml(directLabel)}`}</button>`
+    : ''
+  const hint = plaidOk
+    ? ''
+    : `<p class="onboard-hint">Plaid linking unlocks once API keys are set on the server. ${escapeHtml(directLabel)} works without keys.</p>`
+  const actions = plaidBtn || demoBtn ? `<div class="onboard-actions">${plaidBtn}${demoBtn}</div>` : ''
+  const cta = `${actions}${hint}`
   target.innerHTML = `
     <div class="onboard-head">
       <div><span class="label">First run</span><h3>Connect your first bank</h3></div>
@@ -836,10 +855,12 @@ function renderOnboarding() {
         'Ask your admin to set a master key on the server so linked data is encrypted.')}
       ${onboardingStep(2, plaidOk, 'Bank provider keys',
         'Plaid is configured and ready to link.',
-        'Add Plaid API keys on the server to turn on secure bank linking.')}
+        bankOk
+          ? `Optional — a bank is already connected. Add Plaid API keys to link real institutions.`
+          : `Optional: add Plaid API keys on the server for real institutions. ${directLabel} works without them.`)}
       ${onboardingStep(3, bankOk, 'Connect a bank',
         'At least one bank is linked. You are all set.',
-        'Use the Connect a bank button to securely link an institution.')}
+        `Link an institution with Plaid, or use Try ${directLabel} to explore with seeded data.`)}
     </ol>
     ${cta}
   `
@@ -873,23 +894,86 @@ function connectionRow(conn) {
   `
 }
 
-function renderConnections() {
-  renderOnboarding()
-  const list = clearSkeleton('connectionList')
-  if (!state.connections.length) {
-    list.innerHTML = emptyState('🏦', 'No banks linked', 'Link an institution to sync accounts automatically')
-  } else {
-    list.innerHTML = state.connections.map(connectionRow).join('')
-  }
+function firstDirectProvider() {
+  return state.providers.find((provider) => provider.linkMode === 'direct') || null
+}
 
-  const provider = clearSkeleton('providerPanel')
-  provider.innerHTML = [
-    listRow({
-      title: 'Plaid',
-      detail: state.health?.plaidConfigured ? 'Configured' : 'Keys missing',
-      chip: state.health?.plaidConfigured ? 'ready' : 'local',
-      tone: state.health?.plaidConfigured ? 'good' : 'warn',
-    }),
+function isProviderConnected(providerId) {
+  return state.connections.some((conn) => conn.provider === providerId)
+}
+
+// Cosmetic copy only — behavior is driven by provider.linkMode.
+const DIRECT_PROVIDER_COPY = {
+  mock: { chip: 'demo', detail: 'Seeded local institution — no credentials needed.' },
+}
+
+function providerBadge(provider) {
+  const check = state.providerChecks[provider.id]
+  if (check) {
+    if (check.ok) return { text: 'Ready', tone: 'good' }
+    if (check.configured === false) return { text: 'Not configured', tone: 'warn' }
+    return { text: `Error ${check.errorCode || check.error || 'failed'}`, tone: 'bad' }
+  }
+  return provider.configured
+    ? { text: 'Ready', tone: 'good' }
+    : { text: 'Not configured', tone: 'warn' }
+}
+
+function providerRowHtml(provider) {
+  const label = provider.label || provider.id
+  if (provider.linkMode === 'direct') {
+    const connected = isProviderConnected(provider.id)
+    const busy = state.directLinking === provider.id
+    const copy = DIRECT_PROVIDER_COPY[provider.id] || { chip: 'direct', detail: 'Links directly — no credentials needed.' }
+    const action = connected
+      ? '<button class="ghost-button" disabled>Connected</button>'
+      : `<button class="ghost-button provider-connect" data-provider="${escapeHtml(provider.id)}"${busy ? ' disabled' : ''}>${busy ? 'Connecting…' : `Connect ${escapeHtml(label)}`}</button>`
+    return `
+      <div class="conn-row provider-row">
+        <div class="conn-main">
+          <div class="conn-head">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="chip">${escapeHtml(copy.chip)}</span>
+            ${connected ? '<span class="chip good">connected</span>' : ''}
+          </div>
+          <p>${escapeHtml(copy.detail)}</p>
+        </div>
+        <div class="card-actions conn-actions">${action}</div>
+      </div>
+    `
+  }
+  const badge = providerBadge(provider)
+  const check = state.providerChecks[provider.id]
+  const checking = state.providerChecking === provider.id
+  const detail = check
+    ? check.message || check.errorMessage || check.error || 'Check completed.'
+    : provider.configured
+      ? 'Credentialed bank linking is ready.'
+      : 'Add API keys in backend/.env to enable linking.'
+  return `
+    <div class="conn-row provider-row">
+      <div class="conn-main">
+        <div class="conn-head">
+          <strong>${escapeHtml(provider.label || provider.id)}</strong>
+          <span class="chip ${badge.tone}">${escapeHtml(badge.text)}</span>
+        </div>
+        <p>${escapeHtml(detail)}</p>
+      </div>
+      <div class="card-actions conn-actions">
+        <button class="ghost-button provider-check" data-provider="${escapeHtml(provider.id)}"${checking ? ' disabled' : ''}>${checking ? 'Checking…' : 'Check'}</button>
+      </div>
+    </div>
+  `
+}
+
+function renderProviderPanel() {
+  const panel = clearSkeleton('providerPanel')
+  if (!panel) return
+  if (!state.providers.length) {
+    panel.innerHTML = emptyState('🔌', 'No providers', 'The provider registry has not loaded yet')
+    return
+  }
+  panel.innerHTML = state.providers.map(providerRowHtml).join('') + [
     listRow({
       title: 'Apple Card',
       detail: 'CSV import lane',
@@ -905,6 +989,80 @@ function renderConnections() {
   ].join('')
 }
 
+function renderConnections() {
+  renderOnboarding()
+  const list = clearSkeleton('connectionList')
+  if (!state.connections.length) {
+    const direct = firstDirectProvider()
+    const cta = direct
+      ? `<button class="ghost-button provider-connect" data-provider="${escapeHtml(direct.id)}">Connect ${escapeHtml(direct.label || direct.id)}</button>`
+      : ''
+    list.innerHTML = emptyState(
+      '🏦',
+      'No banks linked',
+      'Link an institution to sync accounts automatically',
+      cta,
+    )
+  } else {
+    list.innerHTML = state.connections.map(connectionRow).join('')
+  }
+  renderProviderPanel()
+}
+
+async function checkProvider(providerId) {
+  if (state.providerChecking) return
+  const provider = state.providers.find((p) => p.id === providerId)
+  const label = provider?.label || providerId
+  state.providerChecking = providerId
+  renderProviderPanel()
+  try {
+    const result = await post(`/api/providers/${encodeURIComponent(providerId)}/check`, {})
+    state.providerChecks[providerId] = result
+    if (result.ok) toast(`${label} check passed.`, 'success')
+    else toast(`${label} check failed: ${result.errorMessage || result.message || result.error || 'unknown error'}`, 'error')
+  } catch (err) {
+    state.providerChecks[providerId] = { ok: false, error: err.message, errorMessage: err.message }
+    toast(`${label} check failed: ${err.message}`, 'error')
+  } finally {
+    state.providerChecking = null
+    renderProviderPanel()
+  }
+}
+
+async function connectDirectProvider(provider) {
+  if (!provider || state.directLinking) return
+  const label = provider.label || provider.id
+  const base = `/api/providers/${encodeURIComponent(provider.id)}`
+  state.directLinking = provider.id
+  renderConnections()
+  try {
+    const { link_token: linkToken } = await post(`${base}/link-token`, {})
+    if (!linkToken) throw new Error(`No link token returned by the server for ${label}.`)
+    const conn = await post(`${base}/exchange-public-token`, { public_token: linkToken, metadata: {} })
+    const connectionId = conn?.id
+    if (!connectionId) throw new Error(`${label} did not return a connection id.`)
+    let added = null
+    try {
+      const res = await post('/api/sync', { connectionId })
+      const mine = res.results?.find((r) => r.connectionId === connectionId)
+      if (mine?.ok === false) throw new Error(mine.error || 'Sync failed')
+      if (Number.isFinite(mine?.added)) added = mine.added
+    } catch (syncErr) {
+      state.directLinking = null
+      toast(`${label} linked, but the first sync failed: ${syncErr.message}`, 'error')
+      await load({ quiet: true })
+      return
+    }
+    state.directLinking = null
+    await load({ quiet: true })
+    toast(added !== null ? `${label} connected — ${added} transactions synced` : `${label} connected.`, 'success')
+  } catch (err) {
+    state.directLinking = null
+    toast(err.message, 'error')
+    renderConnections()
+  }
+}
+
 function setConnectBusy(busy) {
   state.plaidLinking = busy
   document.querySelectorAll('.connect-trigger').forEach((button) => {
@@ -915,7 +1073,7 @@ function setConnectBusy(busy) {
 async function connectBank() {
   if (state.plaidLinking) return
   if (!state.health?.plaidConfigured) {
-    toast('Bank linking is off until Plaid keys are set on the server.', 'error')
+    toast('Plaid keys are not set on the server — try Demo Bank from the Connections panel instead.', 'error')
     return
   }
   if (!window.Plaid || typeof window.Plaid.create !== 'function') {
@@ -979,7 +1137,7 @@ function render() {
 
 async function load({ quiet = false } = {}) {
   try {
-    const [health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories] =
+    const [health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers] =
       await Promise.all([
         get('/health'),
         get('/api/summary'),
@@ -995,8 +1153,9 @@ async function load({ quiet = false } = {}) {
         get(`/api/history?range=${encodeURIComponent(state.historyRange)}`),
         get('/api/subscriptions'),
         get('/api/categories'),
+        get('/api/providers'),
       ])
-    Object.assign(state, { health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories })
+    Object.assign(state, { health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers })
     render()
   } catch (err) {
     if (!quiet) toast(`Backend not ready: ${err.message}`, 'error')
@@ -1212,6 +1371,20 @@ function bindEvents() {
       } catch (err) {
         toast(err.message, 'error')
       }
+      return
+    }
+
+    const providerCheck = event.target.closest('.provider-check')
+    if (providerCheck) {
+      await checkProvider(providerCheck.dataset.provider)
+      return
+    }
+
+    const directConnect = event.target.closest('.provider-connect')
+    if (directConnect) {
+      const provider = state.providers.find((p) => p.id === directConnect.dataset.provider)
+      if (provider) await connectDirectProvider(provider)
+      else toast('Provider is not available.', 'error')
       return
     }
 

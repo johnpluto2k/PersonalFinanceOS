@@ -1285,6 +1285,21 @@ label {
   justify-self: start;
 }
 
+.onboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Provider rows reuse the conn-row shell; the action column must stay
+   shrinkable so "Connect Demo Bank" wraps below the copy at 390px instead of
+   forcing horizontal overflow. */
+.provider-row .conn-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .connect-empty {
   display: flex;
   align-items: center;

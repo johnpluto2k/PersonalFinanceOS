@@ -15,7 +15,10 @@
 // All money comparisons run in integer cents to avoid float drift; dollar
 // values are only reconstructed at the response boundary.
 
-const TRANSFER_CATEGORY = 'Transfer'
+// Category for movements between the user's OWN accounts. A transfer is
+// neither income nor spending; every aggregation here (and store.mjs, which
+// imports this constant) must skip it. Single source of truth.
+export const TRANSFER_CATEGORY = 'Transfer'
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -77,7 +80,7 @@ export function addDaysText(dateText, delta) {
   return date.toISOString().slice(0, 10)
 }
 
-function monthOf(dateText) {
+export function monthOf(dateText) {
   return String(dateText).slice(0, 7)
 }
 
@@ -103,6 +106,47 @@ function groupBy(items, keyFn) {
   return map
 }
 
+// O(n) max date over transactions (no sort); '' when none carry a date.
+function latestDateOf(transactions) {
+  let max = ''
+  for (const tx of transactions) {
+    if (tx.date && tx.date > max) max = tx.date
+  }
+  return max
+}
+
+// Monthly income/spend buckets computed directly from a transactions array
+// using the shared spend/income definitions above — pending and Transfer rows
+// are EXCLUDED. This is intentionally not the same series as /api/cashflow
+// (store.listCashflow), which keeps pending rows: forecast and savings must
+// agree with anomalies/subscriptions about which transactions exist. Returned
+// newest-month-first; bucket shape matches listCashflow ({ month, income,
+// spending, net, count }), integer-cent math throughout.
+export function monthlyCashflowFromTransactions(transactions) {
+  const byMonth = new Map()
+  for (const tx of transactions) {
+    if (!tx.date) continue
+    const spend = isSpendTx(tx)
+    const income = isIncomeTx(tx)
+    if (!spend && !income) continue
+    const month = monthOf(tx.date)
+    const bucket = byMonth.get(month) || { month, incomeCents: 0, spendCents: 0, count: 0 }
+    if (income) bucket.incomeCents += Math.abs(toCents(tx.amount))
+    else bucket.spendCents += toCents(tx.amount)
+    bucket.count += 1
+    byMonth.set(month, bucket)
+  }
+  return [...byMonth.values()]
+    .sort((a, b) => b.month.localeCompare(a.month))
+    .map((bucket) => ({
+      month: bucket.month,
+      income: fromCents(bucket.incomeCents),
+      spending: fromCents(bucket.spendCents),
+      net: fromCents(bucket.incomeCents - bucket.spendCents),
+      count: bucket.count,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // 1a. Anomaly detection (robust z-score over merchant/category peer history)
 // ---------------------------------------------------------------------------
@@ -120,13 +164,15 @@ function groupBy(items, keyFn) {
 export function detectAnomalies(transactions, { asOf, recentDays = 60 } = {}) {
   const spend = transactions.filter((tx) => isSpendTx(tx) && tx.date)
   if (!spend.length) return []
-  const asOfDate = String(asOf || spend.map((t) => t.date).sort().at(-1)).slice(0, 10)
+  const asOfDate = String(asOf || latestDateOf(spend)).slice(0, 10)
   const windowStart = addDaysText(asOfDate, -recentDays)
 
   // Single pass grouping: peer lookups scan only the tx's own merchant/category
-  // bucket, never the full ledger (no O(n^2) over all transactions).
+  // bucket, never the full ledger (no O(n^2) over all transactions). The
+  // category grouping is built lazily — only when some merchant history is
+  // actually too thin — since most ledgers never hit the fallback.
   const byMerchant = groupBy(spend, merchantKeyOf)
-  const byCategory = groupBy(spend, (tx) => tx.category || 'Uncategorized')
+  let byCategory = null
 
   const peersFor = (group, tx) => {
     const earliest = addDaysText(tx.date, -365)
@@ -141,6 +187,7 @@ export function detectAnomalies(transactions, { asOf, recentDays = 60 } = {}) {
     let peers = peersFor(byMerchant.get(merchantKeyOf(tx)) || [], tx)
     if (peers.length < 5) {
       basis = 'category'
+      if (!byCategory) byCategory = groupBy(spend, (t) => t.category || 'Uncategorized')
       peers = peersFor(byCategory.get(tx.category || 'Uncategorized') || [], tx)
       if (peers.length < 12) continue
     }
@@ -191,6 +238,11 @@ const CADENCES = [
   { name: 'annual', min: 330, max: 400, center: 365.25, days: 365, perMonth: 1 / 12 },
 ]
 
+// Best-effort default cadence for series listed via the 'Subscriptions'
+// category exception when no cadence band matches. Hoisted so it is resolved
+// once, not per series.
+const MONTHLY_CADENCE = CADENCES.find((c) => c.name === 'monthly')
+
 // Compress date-sorted charge amounts (cents) into runs of stable pricing.
 // A new run starts when a charge differs from the CURRENT run's median by AT
 // LEAST toleranceCents. (>= not >: the canonical Netflix case is a $2.00 bump
@@ -216,14 +268,17 @@ function priceRuns(chargeCents, toleranceCents) {
 // cadence, confidence) and adds seriesKey, accountId, medianAmount,
 // amountTolerance, intervalConformity, amountConformity, nextExpectedDate,
 // priceIncrease.
-export function detectSubscriptionsV2(transactions, { asOf } = {}) { // eslint-disable-line no-unused-vars
+export function detectSubscriptionsV2(transactions) {
   const spend = transactions.filter((tx) => isSpendTx(tx) && tx.date)
   const groups = groupBy(spend, seriesKeyOf)
 
   const results = []
   for (const [seriesKey, txs] of groups) {
     const charges = [...txs].sort((a, b) => a.date.localeCompare(b.date))
-    const isSubscriptionCategory = charges[0].category === 'Subscriptions'
+    // v1 semantics: the series is described by its NEWEST charge, so a
+    // merchant recategorized going forward is judged by its current category.
+    const newest = charges.at(-1)
+    const isSubscriptionCategory = newest.category === 'Subscriptions'
 
     const intervals = []
     for (let i = 1; i < charges.length; i += 1) {
@@ -246,7 +301,16 @@ export function detectSubscriptionsV2(transactions, { asOf } = {}) { // eslint-d
     const chargeCents = charges.map((tx) => toCents(tx.amount))
     const medianCents = median(chargeCents)
     const toleranceCents = Math.max(200, Math.round(0.05 * medianCents))
-    const amountConformity = chargeCents.filter((c) => Math.abs(c - medianCents) <= toleranceCents).length / chargeCents.length
+
+    // Per-run amount conformity: compress the series into stable price runs
+    // FIRST, then require >= 70% of charges to live in runs of length >= 2.
+    // A legitimate price increase (6 x $9.99 then 4 x $12.99) is two stable
+    // runs covering 100% of charges, while erratic spending (every charge its
+    // own run) scores 0. The old whole-series-median rule rejected exactly the
+    // price-increase series this detector exists to find (6/10 = 0.6 < 0.7).
+    const runs = priceRuns(chargeCents, toleranceCents)
+    const stableCharges = runs.reduce((sum, run) => sum + (run.cents.length >= 2 ? run.cents.length : 0), 0)
+    const amountConformity = stableCharges / chargeCents.length
 
     const passes = Boolean(cadence)
       && intervalConformity != null && intervalConformity >= 0.7
@@ -255,42 +319,57 @@ export function detectSubscriptionsV2(transactions, { asOf } = {}) { // eslint-d
     // always listed, even when cadence/drift checks would reject it.
     if (!passes && !isSubscriptionCategory) continue
 
-    // Price increase: last stable run's median vs the previous run's, must be
-    // an INCREASE of at least max($1.00, 2% of previous).
+    // Price increase: the last run vs the nearest PRECEDING run of length >= 2,
+    // and the last run itself must have >= 2 charges. Both guards matter: a
+    // single charge at a new price is not yet a confirmed increase, and a
+    // single discounted charge (promo month) sandwiched between stable runs
+    // must not fabricate an "increase" measured against the promo price.
+    // The increase must be at least max($1.00, 2% of previous).
     let priceIncrease = null
-    const runs = priceRuns(chargeCents, toleranceCents)
-    if (runs.length >= 2) {
-      const lastRun = runs[runs.length - 1]
-      const prevRun = runs[runs.length - 2]
-      const lastMedian = median(lastRun.cents)
-      const prevMedian = median(prevRun.cents)
-      const deltaCents = lastMedian - prevMedian
-      if (deltaCents >= Math.max(100, Math.round(0.02 * prevMedian))) {
-        priceIncrease = {
-          previousAmount: fromCents(prevMedian),
-          newAmount: fromCents(lastMedian),
-          delta: fromCents(deltaCents),
-          percent: prevMedian > 0 ? Math.round((deltaCents / prevMedian) * 1000) / 10 : null,
-          effectiveDate: charges[lastRun.startIndex].date,
-          confirmedCharges: lastRun.cents.length,
+    const lastRun = runs[runs.length - 1]
+    if (runs.length >= 2 && lastRun.cents.length >= 2) {
+      let prevRun = null
+      for (let i = runs.length - 2; i >= 0; i -= 1) {
+        if (runs[i].cents.length >= 2) {
+          prevRun = runs[i]
+          break
+        }
+      }
+      if (prevRun) {
+        const lastMedian = median(lastRun.cents)
+        const prevMedian = median(prevRun.cents)
+        const deltaCents = lastMedian - prevMedian
+        if (deltaCents >= Math.max(100, Math.round(0.02 * prevMedian))) {
+          priceIncrease = {
+            previousAmount: fromCents(prevMedian),
+            newAmount: fromCents(lastMedian),
+            delta: fromCents(deltaCents),
+            percent: prevMedian > 0 ? Math.round((deltaCents / prevMedian) * 1000) / 10 : null,
+            effectiveDate: charges[lastRun.startIndex].date,
+            confirmedCharges: lastRun.cents.length,
+          }
         }
       }
     }
 
-    const effectiveCadence = cadence || CADENCES.find((c) => c.name === 'monthly')
+    const effectiveCadence = cadence || MONTHLY_CADENCE
     let confidence = 0.5
     if (isSubscriptionCategory) confidence += 0.2
     if (intervalConformity != null && intervalConformity >= 0.85) confidence += 0.15
     if (amountConformity >= 0.9) confidence += 0.15
     confidence = Math.min(0.98, round2(confidence))
 
-    const lastCharged = charges[charges.length - 1].date
+    // Headline cost reflects the CURRENT price (the last run's median), so a
+    // series that just went up reads at its new rate ($17.49 Netflix, not the
+    // all-time median $15.49). medianAmount keeps the whole-series median.
+    const currentCents = median(lastRun.cents)
+    const lastCharged = newest.date
     results.push({
       seriesKey,
-      merchant: merchantDisplay(charges[charges.length - 1]),
-      category: charges[0].category || 'Uncategorized',
-      accountId: charges[0].accountId || null,
-      monthlyCost: round2(fromCents(medianCents) * effectiveCadence.perMonth),
+      merchant: merchantDisplay(newest),
+      category: newest.category || 'Uncategorized',
+      accountId: newest.accountId || null,
+      monthlyCost: round2(fromCents(currentCents) * effectiveCadence.perMonth),
       chargeCount: charges.length,
       lastCharged,
       cadence: effectiveCadence.name,
@@ -312,7 +391,9 @@ export function detectSubscriptionsV2(transactions, { asOf } = {}) { // eslint-d
 // ---------------------------------------------------------------------------
 //
 // baseline = average income/spend over the 3 complete calendar months before
-// the asOf month (listCashflow buckets). Projection assumes the month will
+// the asOf month. Buckets come from monthlyCashflowFromTransactions (pending
+// and Transfer excluded — NOT /api/cashflow's buckets, which keep pending
+// rows). Projection assumes the month will
 // catch up to baseline where it is currently behind, and keeps actuals where
 // it is already ahead:
 //   projectedIncome   = max(incomeMtd, avgIncome)

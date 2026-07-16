@@ -20,10 +20,19 @@ function loadDotEnv() {
 
 loadDotEnv()
 
+// Storage location overrides (testing/scratch installs): PFOS_DATA_DIR moves
+// the data directory, PFOS_DB_PATH pins the SQLite file itself. Unset = the
+// standard backend/data/finance-os.sqlite; no behavior change.
+const dataDir = process.env.PFOS_DATA_DIR
+  ? path.resolve(process.env.PFOS_DATA_DIR)
+  : path.join(ROOT, 'data')
+
 export const config = {
   root: ROOT,
-  dataDir: path.join(ROOT, 'data'),
-  dbPath: path.join(ROOT, 'data', 'finance-os.sqlite'),
+  dataDir,
+  dbPath: process.env.PFOS_DB_PATH
+    ? path.resolve(process.env.PFOS_DB_PATH)
+    : path.join(dataDir, 'finance-os.sqlite'),
   port: Number(process.env.PORT || 8787),
   masterKey: process.env.PFOS_MASTER_KEY || '',
   plaid: {

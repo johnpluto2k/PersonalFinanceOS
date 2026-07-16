@@ -21,6 +21,8 @@ npm.cmd run dev
 
 No package install is needed for this first backend; it uses Node built-ins only, including Node's SQLite module.
 
+Optional storage overrides for testing/scratch installs: `PFOS_DATA_DIR` moves the data directory, `PFOS_DB_PATH` pins the SQLite file itself (default `data/finance-os.sqlite`).
+
 Open the app at:
 
 ```text
@@ -42,7 +44,7 @@ http://127.0.0.1:8787/
 | `PATCH` | `/api/transactions/:id` | Recategorize a transaction and optionally create an automation rule |
 | `GET` | `/api/action-queue` | Highest-priority money/tax/sync actions. Includes insight items: `anomaly` (unusual charges within 30 days of the ledger's latest date, capped at 5, priority = severity), `subscription` (price increases, e.g. "Netflix went up $2.00"), and `forecast` (high-priority projected cash shortfall when `projectedEndOfMonthCash < 0`) |
 | `GET` | `/api/insights` | Full insights payload: `{ asOf, month, savings, forecast, anomalies, subscriptions }` — all computed on read from the ledger (no insight tables). `asOf` is the latest transaction date, not the wall clock |
-| `GET` | `/api/cashflow` | Monthly income/spending summary |
+| `GET` | `/api/cashflow` | Monthly income/spending summary (includes pending rows; unchanged — insight forecast/savings use their own pending-excluded buckets, see Insights algorithms) |
 | `GET` | `/api/history?range=1M` | Net-worth snapshots, cashflow bars, and category spend for charting |
 | `GET` | `/api/budgets` | Monthly budgets with spend, delta, progress, and top merchants |
 | `POST` | `/api/budgets` | Create or upsert a monthly category budget |
@@ -92,27 +94,32 @@ Action queue surfaces anomalies dated within 30 days of asOf, capped at 5 (most 
 
 ### Subscriptions v2 (`detectSubscriptionsV2`)
 
-Spend txs are grouped by seriesKey; each group is date-sorted.
+Spend txs are grouped by seriesKey; each group is date-sorted. The series' `merchant`, `category`, and the Subscriptions-category exception all key off the **newest** charge (v1 semantics: a merchant recategorized going forward is judged by its current category).
 
 - **Cadence** from the median of consecutive day-gaps: weekly 6–8d (center 7), monthly 25–35d (center 30.44), annual 330–400d (center 365.25); anything else is non-recurring. Monthly/weekly require ≥ 3 charges; annual requires ≥ 2.
 - **Interval regularity**: ≥ 70% of intervals within ±20% of the cadence center, else reject.
-- **Amount drift**: `tolerance = max($2.00, 5% × medianAmount)`; ≥ 70% of charges within tolerance of the series median, else reject. Exception carried from v1: `category = 'Subscriptions'` is always listed (cadence defaults to monthly when undetectable).
-- **Price increase**: date-sorted charges are compressed into runs — a new run starts when a charge differs from the *current run's median* by **at least** the tolerance (≥, in cents, so the canonical $2.00 bump against a $2.00 tolerance splits). If the last run's median exceeds the previous run's by ≥ `max($1.00, 2%)`, `priceIncrease = { previousAmount, newAmount, delta, percent, effectiveDate (first charge of the last run), confirmedCharges }`.
-- **monthlyCost**: monthly → medianAmount; annual → ÷ 12; weekly → × 52⁄12.
+- **Price runs**: date-sorted charge amounts are compressed into runs of stable pricing — a new run starts when a charge differs from the *current run's median* by **at least** `tolerance = max($2.00, 5% × medianAmount)` (≥, in cents, so the canonical $2.00 bump against a $2.00 tolerance splits).
+- **Amount conformity (per-run)**: `amountConformity` = share of charges living in runs of length ≥ 2; reject when < 70%. (The old whole-series-median rule rejected the exact price-increase series this feature targets: 6 × $9.99 + 4 × $12.99 scored 6⁄10 = 0.6 < 0.7. Per-run, that series is two stable runs covering 100% of charges; erratic per-charge drift still scores 0.) Exception carried from v1: `category = 'Subscriptions'` (on the newest charge) is always listed (cadence defaults to monthly when undetectable).
+- **Price increase**: compare the last run against the nearest *preceding* run of length ≥ 2; the last run must itself have ≥ 2 charges. Both guards matter: a single charge at a new price is not yet confirmed, and a single discounted promo charge between stable runs must not fabricate an increase measured against the promo price. If the last run's median exceeds the comparison run's by ≥ `max($1.00, 2%)`, `priceIncrease = { previousAmount, newAmount, delta, percent, effectiveDate (first charge of the last run), confirmedCharges }`.
+- **monthlyCost** (headline, current price): derived from the **last run's median** — a series that just went up reads at its new rate (Netflix shows $17.49, not the all-time median $15.49). Monthly → last-run median; annual → ÷ 12; weekly → × 52⁄12. `medianAmount` separately keeps the whole-series median.
 - **confidence**: `0.5 + 0.2·(category = 'Subscriptions') + 0.15·(intervalConformity ≥ 0.85) + 0.15·(amountConformity ≥ 0.9)`, capped at 0.98.
 - **nextExpectedDate**: lastCharged + 7/30/365 days by cadence.
 
 ### Forecast (`computeForecast`, catch-up-to-baseline)
 
-Over `/api/cashflow` monthly buckets (Transfer excluded): baseline = the 3 complete calendar months before the asOf month (`avgIncome`, `avgSpend`); MTD actuals = the asOf month's bucket. Then `projectedIncome = max(incomeMtd, avgIncome)`, `projectedSpending = max(spendMtd, avgSpend)`, and `projectedEndOfMonthCash = cashNow + (projectedIncome − incomeMtd) − (projectedSpending − spendMtd)`. When `projectedEndOfMonthCash < 0` the action queue adds a high-priority `forecast` item.
+Over monthly buckets computed from the ledger transactions via `monthlyCashflowFromTransactions` — **pending and Transfer rows excluded**, the same transaction set anomalies/subscriptions see. (This is intentionally *not* `/api/cashflow`'s series: that endpoint keeps pending rows and is unchanged.) Baseline = the 3 complete calendar months before the asOf month (`avgIncome`, `avgSpend`); MTD actuals = the asOf month's bucket. Then `projectedIncome = max(incomeMtd, avgIncome)`, `projectedSpending = max(spendMtd, avgSpend)`, and `projectedEndOfMonthCash = cashNow + (projectedIncome − incomeMtd) − (projectedSpending − spendMtd)`. When `projectedEndOfMonthCash < 0` the action queue adds a high-priority `forecast` item (months rendered as names, e.g. "July", not raw ISO).
 
 ### Savings rates (`computeSavingsRates`)
 
-`rate_N = (Σincome − Σspend) / Σincome` over the N (3 and 6) complete calendar months strictly before the asOf month — the partial current month is excluded; `null` when Σincome = 0. Surfaced as `savingsRate3m`/`savingsRate6m` on `/api/summary` and as `savings.threeMonth`/`savings.sixMonth` on `/api/insights`.
+`rate_N = (Σincome − Σspend) / Σincome` over the N (3 and 6) complete calendar months strictly before the asOf month — the partial current month is excluded; `null` when Σincome = 0. Uses the same pending-excluded monthly buckets as the forecast. Surfaced as `savingsRate3m`/`savingsRate6m` on `/api/summary` and as `savings.threeMonth`/`savings.sixMonth` on `/api/insights`.
+
+### Caching
+
+`insightsReport()` (backing `/api/insights`, `/api/subscriptions`, the action-queue insight items, and `/api/summary`'s savings/forecast fields) is memoized on a ledger version key — `COUNT(*)` + `MAX(updated_at)` over `transactions`, plus `MAX(updated_at)` over `accounts` (the forecast's `cashNow` depends on balances). A page load that hits summary/actions/insights/subscriptions runs the detection pipeline once, not 3–4×; any write invalidates the memo on the next read.
 
 ### Demo data note
 
-`migrate()` performs a one-time, meta-flag-gated (`demo_insights_v3`) reconcile that bumps the two most recent demo Netflix rows (`demo_2026-06_netflix`, `demo_2026-07_netflix`) from 15.49 → 17.49 so the price-increase detector has a real confirmed case. It is guarded by exact id **and** exact current amount, so user-edited data is never touched, and it never runs twice.
+Fresh installs seed the demo Netflix series with the price bump already applied — 15.49 through 2026-05, 17.49 for 2026-06/2026-07 — and an Apple Card balance carrying the matching +$4.00, then set the `demo_insights_v3` meta flag. For DBs seeded before F3 (flat 15.49), `migrate()` performs a one-time, meta-flag-gated reconcile that bumps `demo_2026-06_netflix`/`demo_2026-07_netflix` from 15.49 → 17.49 and adds $2.00 per bumped row to the Apple Card balance (credit card: more spend = more owed). It is guarded by exact id **and** exact current amount, so user-edited data is never touched; the flag is only set when rows were actually bumped or the data is already post-bump — never against an empty (not-yet-seeded) transactions table, since `migrate()` runs before the seed.
 
 ## Apple Card import
 

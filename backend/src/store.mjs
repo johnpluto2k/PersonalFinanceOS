@@ -2,13 +2,20 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { config } from './config.mjs'
-// Feature 3 "smarter insights": pure, DB-free detection/forecast algorithms.
-// Import is strictly one-directional (insights.mjs never imports store.mjs).
+// Feature 3 "smarter insights": pure, DB-free detection/forecast algorithms,
+// plus the shared date/category helpers (single source of truth — store must
+// not redefine them). Import is strictly one-directional (insights.mjs never
+// imports store.mjs).
 import {
+  TRANSFER_CATEGORY,
+  addDaysText,
+  addMonthsText,
   computeForecast,
   computeSavingsRates,
   detectAnomalies,
   detectSubscriptionsV2,
+  monthOf,
+  monthlyCashflowFromTransactions,
 } from './insights.mjs'
 
 let database
@@ -53,20 +60,10 @@ function stringify(value) {
   return value == null ? null : JSON.stringify(value)
 }
 
+// monthOf with a wall-clock fallback for null dates (insights.mjs owns the
+// pure helper; date/month arithmetic is imported from there, not duplicated).
 function monthText(dateText) {
-  return String(dateText || todayText()).slice(0, 7)
-}
-
-function addMonths(month, delta) {
-  const [year, monthIndex] = String(month).split('-').map(Number)
-  const date = new Date(Date.UTC(year, monthIndex - 1 + delta, 1))
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
-}
-
-function addDaysText(dateText, delta) {
-  const date = new Date(`${dateText}T00:00:00Z`)
-  date.setUTCDate(date.getUTCDate() + delta)
-  return date.toISOString().slice(0, 10)
+  return monthOf(dateText || todayText())
 }
 
 // Deterministic dense weekly net-worth history for the demo dataset.
@@ -316,21 +313,35 @@ function migrate(con) {
     con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_budgets_v2', 'true')
   }
 
-  // Feature 3 (smarter insights) one-time demo reconcile, mirroring the
-  // demo_budgets_v2 pattern above: bump the two most recent demo Netflix rows
-  // from 15.49 -> 17.49 so the subscription price-increase detector has a real
-  // confirmed two-charge case on the existing DB. Guarded by EXACT id AND exact
-  // current amount, so a user-edited (or already-bumped) row is never touched,
-  // and gated by its own meta flag so it never runs twice. Data-only, additive,
-  // no schema change.
+  // Feature 3 (smarter insights) one-time demo reconcile for ALREADY-SEEDED
+  // DBs only: bump the two most recent demo Netflix rows from 15.49 -> 17.49 so
+  // the subscription price-increase detector has a real confirmed two-charge
+  // case. Fresh installs never rely on this — migrate() runs BEFORE
+  // seedIfEmpty()/ensureDemoDepth(), so on an empty transactions table this
+  // must do nothing and, critically, must NOT set the flag (the old code set it
+  // permanently against 0 rows, killing the demo case on fresh DBs; the seed
+  // itself now writes 17.49 for the last two months and sets the flag).
+  // Guards: exact id AND exact current amount, so a user-edited row is never
+  // touched. The flag is set only when rows were actually bumped or the data is
+  // already post-bump. Each bumped row also adds $2.00 to the Apple Card
+  // balance — it is a credit card, so more spend means more owed.
   const insightsReconciled = con.prepare("SELECT value FROM meta WHERE key='demo_insights_v3'").get()
-  if (insightsReconciled?.value !== 'true') {
+  if (insightsReconciled?.value !== 'true' && countRows(con, 'transactions') > 0) {
     const bumpNetflix = con.prepare(`UPDATE transactions SET amount = ?, updated_at = ?
       WHERE id = ? AND amount = ?`)
     const netflixStamp = nowIso()
-    bumpNetflix.run(17.49, netflixStamp, 'demo_2026-06_netflix', 15.49)
-    bumpNetflix.run(17.49, netflixStamp, 'demo_2026-07_netflix', 15.49)
-    con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_insights_v3', 'true')
+    let bumped = 0
+    bumped += bumpNetflix.run(17.49, netflixStamp, 'demo_2026-06_netflix', 15.49).changes
+    bumped += bumpNetflix.run(17.49, netflixStamp, 'demo_2026-07_netflix', 15.49).changes
+    if (bumped > 0) {
+      con.prepare(`UPDATE accounts SET balance = balance + ?, updated_at = ?
+        WHERE id = 'apple_card_manual' AND kind = 'credit'`).run(2 * bumped, netflixStamp)
+    }
+    const postBump = con.prepare(`SELECT COUNT(*) AS n FROM transactions
+      WHERE id IN ('demo_2026-06_netflix', 'demo_2026-07_netflix') AND amount = 17.49`).get().n
+    if (bumped > 0 || postBump === 2) {
+      con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_insights_v3', 'true')
+    }
   }
 
   // Re-flatten the demo net-worth history to the dense weekly series. Runs on
@@ -471,7 +482,10 @@ function ensureDemoDepth(con) {
       name: 'Apple Card',
       institution: 'Apple Card',
       kind: 'credit',
-      balance: 642.27,
+      // 642.27 at the flat 15.49 Netflix price + $2.00 x 2 for the seeded
+      // 17.49 June/July rows below, so the credit-card balance is consistent
+      // with the seeded spend (more spend = more owed).
+      balance: 646.27,
       importOnly: true,
       notes: 'Apple Card uses CSV exports until a native companion exists.',
     },
@@ -504,7 +518,12 @@ function ensureDemoDepth(con) {
       [`demo_${month}_utilities`, 'manual_checking_primary', `${month}-${day(8)}`, 'City Utilities', 'Power and water bill', 118 + index * 3, 'Utilities'],
       [`demo_${month}_apple`, 'apple_card_manual', `${month}-${day(2)}`, 'Apple Services', 'Apple services bundle', 19.95, 'Subscriptions'],
       [`demo_${month}_spotify`, 'apple_card_manual', `${month}-${day(5)}`, 'Spotify', 'Music subscription', 10.99, 'Subscriptions'],
-      [`demo_${month}_netflix`, 'apple_card_manual', `${month}-${day(12)}`, 'Netflix', 'Video subscription', 15.49, 'Subscriptions'],
+      // Netflix carries a $2.00 price bump for the last two months so the
+      // price-increase detector has a confirmed two-charge case on a FRESH DB
+      // (migrate()'s demo_insights_v3 reconcile only covers pre-existing DBs
+      // seeded at a flat 15.49 — it runs before this seed and skips empty
+      // ledgers). The Apple Card balance above carries the matching +$4.00.
+      [`demo_${month}_netflix`, 'apple_card_manual', `${month}-${day(12)}`, 'Netflix', 'Video subscription', month >= '2026-06' ? 17.49 : 15.49, 'Subscriptions'],
       [`demo_${month}_groceries_a`, 'apple_card_manual', `${month}-${day(6)}`, "Trader Joe's", 'Groceries', groceryBase, 'Groceries'],
       [`demo_${month}_groceries_b`, 'apple_card_manual', `${month}-${day(19)}`, 'Whole Foods', 'Groceries', groceryBase + 22, 'Groceries'],
       [`demo_${month}_dining_a`, 'apple_card_manual', `${month}-${day(11)}`, 'Chipotle', 'Lunch', diningBase, 'Dining'],
@@ -600,6 +619,9 @@ function ensureDemoDepth(con) {
   }
 
   con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_v2_seeded', 'true')
+  // The rows above are already post-bump (17.49 June/July Netflix), so the
+  // migrate() reconcile must never re-apply on this DB file.
+  con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_insights_v3', 'true')
 }
 
 function connectionFromRow(row) {
@@ -634,6 +656,14 @@ export function deriveHealth(connection) {
 // "3d ago" / "5h ago" / "12m ago" / "just now"; null lastSyncAt -> "never".
 // Rounding matches app.js humanizeTime (Math.round) so the action-queue item
 // and the connection card agree about the same timestamp.
+// '2026-07' -> 'July' for user-facing forecast copy (raw ISO months read like
+// database output in the action queue).
+function humanizeMonth(month) {
+  const [year, monthNumber] = String(month).split('-').map(Number)
+  if (!year || !monthNumber) return String(month)
+  return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })
+}
+
 function humanizeSyncAge(lastSyncAt) {
   if (!lastSyncAt) return 'never'
   const ms = Date.now() - new Date(lastSyncAt).getTime()
@@ -1021,14 +1051,15 @@ export function listTaxTasks() {
   return db().prepare("SELECT * FROM tax_tasks ORDER BY COALESCE(due_date, '9999-99-99'), priority DESC").all().map(taxTaskFromRow)
 }
 
-// Category for movements between the user's OWN accounts (e.g. credit-card
-// autopay from checking, brokerage contributions). Both legs stay in the ledger
-// so per-account balances reconcile, but a transfer is neither income nor
-// spending, so cashflow/summary/category-spend/subscription aggregations must
-// skip it or every internal transfer inflates income AND spending by the same
-// amount each month.
-const TRANSFER_CATEGORY = 'Transfer'
-
+// Movements between the user's OWN accounts (category = TRANSFER_CATEGORY,
+// imported from insights.mjs) keep both legs in the ledger so per-account
+// balances reconcile, but a transfer is neither income nor spending, so
+// cashflow/summary/category-spend/subscription aggregations must skip it or
+// every internal transfer inflates income AND spending by the same amount.
+//
+// NOTE: this endpoint's buckets intentionally INCLUDE pending transactions
+// (they are real, dated ledger rows). Insight computations use the stricter
+// pending-excluded buckets from insights.monthlyCashflowFromTransactions.
 export function listCashflow() {
   const txs = listTransactions(5000)
   const byMonth = new Map()
@@ -1190,7 +1221,7 @@ export function categorySpendForMonth(month = latestTransactionMonth()) {
 export function listBudgets() {
   const con = db()
   const currentMonth = latestTransactionMonth()
-  const previousMonth = addMonths(currentMonth, -1)
+  const previousMonth = addMonthsText(currentMonth, -1)
   return con.prepare('SELECT * FROM budgets ORDER BY category').all().map((row) => {
     const budget = budgetFromRow(row)
     const current = con.prepare(`SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count
@@ -1377,34 +1408,55 @@ export function updateTransactionCategory(id, body = {}) {
 }
 
 export function listSubscriptions() {
-  // v2 detection (insights.mjs): interval cadence + amount-drift tolerance +
+  // v2 detection (insights.mjs): interval cadence + per-run amount conformity +
   // price-increase runs, grouped per (merchant, account) so the same service on
   // two cards yields two rows. Same export/endpoint as v1 with a SUPERSET shape
   // (every v1 field kept). Spend/Transfer/pending filtering happens inside the
-  // pure module using the shared spend-tx definition.
-  const txs = listTransactions(5000)
-  const asOf = txs.map((tx) => tx.date).filter(Boolean).sort().at(-1) || todayText()
-  return detectSubscriptionsV2(txs, { asOf })
+  // pure module using the shared spend-tx definition. Served from the memoized
+  // report so /api/subscriptions never re-runs the pipeline on an unchanged
+  // ledger.
+  return insightsReport().subscriptions
 }
+
+// Memoized insights: the full pipeline runs 3-4x per page load otherwise
+// (summary() -> actionQueue() -> insightsReport, plus /api/actions,
+// /api/insights, /api/subscriptions). Keyed on a ledger version — COUNT
+// catches deletes, MAX(updated_at) catches inserts/updates; the accounts stamp
+// is included because the forecast's cashNow depends on balances, which can
+// move without a transaction write (e.g. a manual balance edit).
+let insightsMemo = { key: null, report: null }
 
 // Assembled Feature 3 insights payload for GET /api/insights. Everything is
 // computed on read from the ledger (no insight tables); asOf is the latest
 // transaction date, NOT the wall clock, so figures are stable between syncs.
 export function insightsReport() {
-  const accounts = db().prepare('SELECT * FROM accounts').all().map(accountFromRow)
+  const con = db()
+  const version = con.prepare(`SELECT
+      (SELECT COUNT(*) FROM transactions) AS txCount,
+      (SELECT MAX(updated_at) FROM transactions) AS txStamp,
+      (SELECT MAX(updated_at) FROM accounts) AS accountStamp`).get()
+  const key = `${version.txCount}|${version.txStamp || ''}|${version.accountStamp || ''}`
+  if (insightsMemo.key === key) return insightsMemo.report
+
+  const accounts = con.prepare('SELECT * FROM accounts').all().map(accountFromRow)
   const balances = balanceSummaryFromSnapshot({ accounts })
   const txs = listTransactions(5000)
-  const monthlyCashflow = listCashflow()
-  const asOf = txs.map((tx) => tx.date).filter(Boolean).sort().at(-1) || todayText()
+  // Forecast/savings buckets come from the same pending/Transfer-excluded
+  // transaction set as anomalies/subscriptions — NOT listCashflow(), whose
+  // /api/cashflow buckets intentionally keep pending rows.
+  const monthlyCashflow = monthlyCashflowFromTransactions(txs)
+  const asOf = txs.reduce((max, tx) => (tx.date && tx.date > max ? tx.date : max), '') || todayText()
   const month = monthText(asOf)
-  return {
+  const report = {
     asOf,
     month,
     savings: computeSavingsRates(monthlyCashflow, month),
     forecast: computeForecast({ cashNow: balances.cash, monthlyCashflow, asOf }),
     anomalies: detectAnomalies(txs, { asOf }),
-    subscriptions: detectSubscriptionsV2(txs, { asOf }),
+    subscriptions: detectSubscriptionsV2(txs),
   }
+  insightsMemo = { key, report }
+  return report
 }
 
 export function listCategories() {
@@ -1540,7 +1592,7 @@ export function actionQueue() {
       type: 'forecast',
       priority: 'high',
       title: `Projected cash shortfall of $${shortfall.toFixed(2)} by month end`,
-      detail: `At the ${insights.forecast.baselineMonths[0]}–${insights.forecast.baselineMonths[2]} baseline pace, cash ends ${insights.forecast.month} at $${insights.forecast.projectedEndOfMonthCash.toFixed(2)}.`,
+      detail: `At the ${humanizeMonth(insights.forecast.baselineMonths[0])}–${humanizeMonth(insights.forecast.baselineMonths[2])} baseline pace, cash ends ${humanizeMonth(insights.forecast.month)} at $${insights.forecast.projectedEndOfMonthCash.toFixed(2)}.`,
       dueDate: null,
     })
   }
@@ -1591,10 +1643,12 @@ export function summary(snapshot = readDb()) {
   const actions = actionQueue().length
 
   // Feature 3 additive fields: savings rates over complete months and the
-  // catch-up-to-baseline end-of-month cash forecast (see insights.mjs).
-  const monthlyCashflow = listCashflow()
-  const savings = computeSavingsRates(monthlyCashflow, latestMonth)
-  const forecast = computeForecast({ cashNow: balances.cash, monthlyCashflow, asOf: latestTxDate || todayText() })
+  // catch-up-to-baseline end-of-month cash forecast. Reuses the memoized
+  // report (already warmed by actionQueue() one line up) instead of
+  // recomputing savings/forecast a second time per request.
+  const insights = insightsReport()
+  const savings = insights.savings
+  const forecast = insights.forecast
 
   return {
     asOf: nowIso(),

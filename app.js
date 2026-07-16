@@ -14,6 +14,7 @@ const state = {
   rules: [],
   history: { snapshots: [], cashflow: [], categories: [] },
   subscriptions: [],
+  insights: null,
   categories: [],
   view: 'overview',
   historyRange: '1Y',
@@ -97,6 +98,36 @@ function amountClass(amount) {
 
 function accountKind(kind) {
   return String(kind || 'other').replace(/_/g, ' ')
+}
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// '2026-04' -> 'Apr'; anything unparseable falls through untouched.
+function monthShort(ym) {
+  const n = Number(String(ym || '').slice(5, 7))
+  return MONTH_SHORT[n - 1] || String(ym || '')
+}
+
+// ['2026-04','2026-05','2026-06'] -> 'Apr–Jun' (order-insensitive).
+function monthRangeLabel(months) {
+  if (!Array.isArray(months) || !months.length) return ''
+  const sorted = months.map(String).slice().sort()
+  const first = monthShort(sorted[0])
+  const last = monthShort(sorted.at(-1))
+  return first === last ? first : `${first}–${last}`
+}
+
+// Fractional rate (0.298) -> '29.8%'; null/NaN (zero-income window) -> 'n/a'.
+function fmtRate(rate, digits = 1) {
+  const n = Number(rate)
+  if (rate == null || !Number.isFinite(n)) return 'n/a'
+  return `${(n * 100).toFixed(digits)}%`
+}
+
+function accountNameById(accountId) {
+  if (!accountId) return ''
+  const account = state.accounts.find((a) => a.id === accountId)
+  return account?.name || ''
 }
 
 function humanizeTime(value) {
@@ -405,6 +436,38 @@ function renderOverview() {
   setAnimated('assetTotal', s.assets, (n) => fmtMoney(n))
   setAnimated('debtTotal', s.debt, (n) => fmtMoney(n))
   setText('runwayValue', s.cashRunwayMonths == null ? 'n/a' : `${s.cashRunwayMonths} mo`)
+
+  // Forecast lives in /api/insights; /api/summary carries an additive copy as a
+  // fallback so the stat still fills when one of the two lags the other.
+  const forecastCash = state.insights?.forecast?.projectedEndOfMonthCash ?? s.forecastEndOfMonthCash
+  if (forecastCash == null || !Number.isFinite(Number(forecastCash))) {
+    setText('forecastValue', 'n/a')
+  } else {
+    setAnimated('forecastValue', forecastCash, (n) => fmtMoney(n))
+  }
+
+  // Savings rate lives in /api/insights; /api/summary carries additive
+  // savingsRate3m/savingsRate6m copies as a fallback (same pattern as the
+  // forecast tile above) so the stat still fills when one feed lags the other.
+  const savings = state.insights?.savings
+  const three = savings?.threeMonth
+  const asRate = (value) => (value != null && Number.isFinite(Number(value)) ? Number(value) : null)
+  const rate3 = asRate(three?.rate) ?? asRate(s.savingsRate3m)
+  const rate6 = asRate(savings?.sixMonth?.rate) ?? asRate(s.savingsRate6m)
+  if (rate3 != null) {
+    setAnimated('savingsRateMetric', rate3 * 100, (n) => fmtRate(n / 100))
+    const metaParts = []
+    if (rate6 != null) metaParts.push(`6m ${fmtRate(rate6)}`)
+    // Months list only exists on the insights payload; in summary-fallback
+    // mode the meta gracefully degrades to just the 6m figure.
+    const range = three ? monthRangeLabel(three.months) : ''
+    if (range) metaParts.push(range)
+    setText('savingsRateMeta', metaParts.join(' · ') || 'Last 3 months')
+  } else {
+    setText('savingsRateMetric', 'n/a')
+    setText('savingsRateMeta', 'Needs a complete month')
+  }
+
   setAnimated('incomeMetric', s.income30, (n) => fmtMoney(n))
   setAnimated('spendMetric', s.spending30, (n) => fmtMoney(n))
   setAnimated('accountMetric', s.accounts, (n) => String(Math.round(n)))
@@ -440,7 +503,9 @@ function renderActionQueue() {
   target.innerHTML = state.actions.slice(0, 6).map((action) => listRow({
     title: action.title,
     detail: action.detail,
-    chip: action.priority,
+    // Anomalies get a named chip so unusual charges read differently from
+    // routine due-date items; tone still follows priority (high = red).
+    chip: action.type === 'anomaly' ? 'anomaly' : action.priority,
     tone: action.priority === 'high' ? 'bad' : 'warn',
   })).join('')
 }
@@ -600,6 +665,49 @@ function renderBudgets() {
   }).join('')
 }
 
+function renderCashflowForecast() {
+  const target = clearSkeleton('cashflowForecast')
+  if (!target) return
+  const f = state.insights?.forecast
+  if (!f || f.projectedEndOfMonthCash == null || !Number.isFinite(Number(f.projectedEndOfMonthCash))) {
+    target.innerHTML = emptyState('🔮', 'No forecast yet', 'Projections appear once a complete month of history exists')
+    return
+  }
+  const projected = Number(f.projectedEndOfMonthCash)
+  const net = Number(f.projectedNet || 0)
+  const baselineRange = Array.isArray(f.baselineMonths) ? monthRangeLabel(f.baselineMonths) : ''
+  // baselineMonths is an array of month keys, never a count — when the range
+  // label is unavailable, fall back to the constant baseline description.
+  const note = baselineRange
+    ? `Based on ${baselineRange} average`
+    : 'Based on 3-month average'
+  target.innerHTML = `
+    <div class="forecast-hero">
+      <span class="label">${escapeHtml(`Projected cash · end of ${monthShort(f.month)}`)}</span>
+      <strong class="${projected < 0 ? 'neg' : ''}">${escapeHtml(fmtMoney(projected, true))}</strong>
+      <p>${escapeHtml(`Cash today ${fmtMoney(f.cashNow, true)} · day ${f.daysElapsed} of ${f.daysInMonth}`)}</p>
+    </div>
+    <div class="forecast-grid">
+      <div>
+        <span>Projected income</span>
+        <strong>${escapeHtml(fmtMoney(f.projectedIncome))}</strong>
+        <small>${escapeHtml(`MTD ${fmtMoney(f.incomeMtd)} · avg ${fmtMoney(f.avgIncome)}`)}</small>
+      </div>
+      <div>
+        <span>Projected spend</span>
+        <strong>${escapeHtml(fmtMoney(f.projectedSpending))}</strong>
+        <small>${escapeHtml(`MTD ${fmtMoney(f.spendMtd)} · avg ${fmtMoney(f.avgSpend)}`)}</small>
+      </div>
+      <div>
+        <span>Projected net</span>
+        <strong class="${net < 0 ? 'neg' : 'pos'}">${escapeHtml(fmtMoney(net))}</strong>
+        <small>income minus spend</small>
+      </div>
+    </div>
+    <p class="forecast-note">${escapeHtml(note)}</p>
+  `
+}
+
 function renderCashflow() {
   // Use Chart.js for cashflow visualization
   if (typeof initCashflowChart === 'function') {
@@ -607,6 +715,8 @@ function renderCashflow() {
   } else {
     clearSkeleton('cashflowChart').innerHTML = cashflowBars(state.cashflow.slice().reverse())
   }
+
+  renderCashflowForecast()
 
   const target = clearSkeleton('cashflowStats')
   if (!state.cashflow.length) {
@@ -640,18 +750,35 @@ function renderSubscriptions() {
     summary.innerHTML = `
       <span class="label">Est. monthly</span>
       <strong>${escapeHtml(fmtMoney(total, true))}</strong>
+      <span class="sub-annual">${escapeHtml(`${fmtMoney(total * 12, true)}/yr`)}</span>
       <span class="chip">${state.subscriptions.length} recurring</span>
     `
   }
-  target.innerHTML = state.subscriptions.map((item) => financeCard({
-    title: item.merchant,
-    meta: item.cadence,
-    value: fmtMoney(item.monthlyCost, true),
-    chip: `${Math.round(item.confidence * 100)}%`,
-    tone: item.confidence > 0.9 ? 'good' : 'warn',
-    accent: item.category === 'Subscriptions' ? '#a78bfa' : '#38bdf8',
-    body: `${item.chargeCount} charges | last ${item.lastCharged || 'unknown'}`,
-  })).join('')
+  target.innerHTML = state.subscriptions.map((item) => {
+    const increase = item.priceIncrease
+    const badges = [`<span class="chip">${escapeHtml(item.cadence || 'recurring')}</span>`]
+    if (increase && Number(increase.delta) > 0) {
+      badges.push(`<span class="chip warn price-up">${escapeHtml(`↑ ${fmtMoney(increase.delta, true)} since ${increase.effectiveDate || 'recently'}`)}</span>`)
+    }
+    // Two rows can share a merchant (same subscription on two cards) — the
+    // account name is what tells them apart.
+    const accountName = accountNameById(item.accountId)
+    const bodyParts = []
+    if (accountName) bodyParts.push(accountName)
+    bodyParts.push(`${item.chargeCount} charges`)
+    bodyParts.push(`last ${item.lastCharged || 'unknown'}`)
+    if (item.nextExpectedDate) bodyParts.push(`next ~${item.nextExpectedDate}`)
+    return financeCard({
+      title: item.merchant,
+      meta: item.category || 'Recurring',
+      value: fmtMoney(item.monthlyCost, true),
+      chip: `${Math.round(item.confidence * 100)}%`,
+      tone: item.confidence > 0.9 ? 'good' : 'warn',
+      accent: increase ? '#f59e0b' : item.category === 'Subscriptions' ? '#a78bfa' : '#38bdf8',
+      body: bodyParts.join(' | '),
+      extra: `<div class="sub-badges">${badges.join('')}</div>`,
+    })
+  }).join('')
 }
 
 function renderAccounts() {
@@ -1172,7 +1299,7 @@ function render() {
 
 async function load({ quiet = false } = {}) {
   try {
-    const [health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers] =
+    const [health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers, insights] =
       await Promise.all([
         get('/health'),
         get('/api/summary'),
@@ -1189,8 +1316,11 @@ async function load({ quiet = false } = {}) {
         get('/api/subscriptions'),
         get('/api/categories'),
         get('/api/providers'),
+        // Insights is additive — an older backend without /api/insights should
+        // degrade to empty states, not take down the whole dashboard load.
+        get('/api/insights').catch(() => null),
       ])
-    Object.assign(state, { health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers })
+    Object.assign(state, { health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers, insights })
     render()
   } catch (err) {
     if (!quiet) toast(`Backend not ready: ${err.message}`, 'error')

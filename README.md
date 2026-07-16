@@ -18,6 +18,9 @@
 | **Keyboard Shortcuts** | ✅ | Power | `/` search, `g+section` nav, `?` help, `Esc` close, organized help modal |
 | **Loading & Empty States** | ✅ | Polish | Skeleton loaders, friendly empty states with CTAs, smooth animations |
 | **Toast Notifications** | ✅ | Polish | Import/rule/budget feedback, slide-in animations, auto-dismiss |
+| **Provider Registry + Demo Bank** (v3) | ✅ | Modern | Mock "Demo Bank" provider (deterministic 12-month ledger, cursor sync, encrypted tokens); Plaid readiness check — add credentials to `.env`, restart, press "check" |
+| **Resilient Sync** (v3) | ✅ | Modern | Error classification (config/auth/rate-limit/provider-down), bounded retry + backoff, per-connection health chips, action-queue alerts; one failing provider never blocks another |
+| **Smarter Insights** (v3) | ✅ | Modern | Anomaly detection (robust z-score vs merchant/category norm), subscription detection v2 (cadence + "Netflix went up $2" price alerts), month-end cash forecast + trailing savings rate |
 
 ## Quick Start
 

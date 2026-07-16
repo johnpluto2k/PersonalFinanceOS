@@ -2,6 +2,14 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { config } from './config.mjs'
+// Feature 3 "smarter insights": pure, DB-free detection/forecast algorithms.
+// Import is strictly one-directional (insights.mjs never imports store.mjs).
+import {
+  computeForecast,
+  computeSavingsRates,
+  detectAnomalies,
+  detectSubscriptionsV2,
+} from './insights.mjs'
 
 let database
 
@@ -306,6 +314,23 @@ function migrate(con) {
     reconcileBudget.run(40, budgetStamp, 'budget_subscriptions', 'Subscriptions', 80)
     reconcileBudget.run(100, budgetStamp, 'budget_transport', 'Transport', 190)
     con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_budgets_v2', 'true')
+  }
+
+  // Feature 3 (smarter insights) one-time demo reconcile, mirroring the
+  // demo_budgets_v2 pattern above: bump the two most recent demo Netflix rows
+  // from 15.49 -> 17.49 so the subscription price-increase detector has a real
+  // confirmed two-charge case on the existing DB. Guarded by EXACT id AND exact
+  // current amount, so a user-edited (or already-bumped) row is never touched,
+  // and gated by its own meta flag so it never runs twice. Data-only, additive,
+  // no schema change.
+  const insightsReconciled = con.prepare("SELECT value FROM meta WHERE key='demo_insights_v3'").get()
+  if (insightsReconciled?.value !== 'true') {
+    const bumpNetflix = con.prepare(`UPDATE transactions SET amount = ?, updated_at = ?
+      WHERE id = ? AND amount = ?`)
+    const netflixStamp = nowIso()
+    bumpNetflix.run(17.49, netflixStamp, 'demo_2026-06_netflix', 15.49)
+    bumpNetflix.run(17.49, netflixStamp, 'demo_2026-07_netflix', 15.49)
+    con.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('demo_insights_v3', 'true')
   }
 
   // Re-flatten the demo net-worth history to the dense weekly series. Runs on
@@ -1352,40 +1377,34 @@ export function updateTransactionCategory(id, body = {}) {
 }
 
 export function listSubscriptions() {
-  // A recurring internal transfer (e.g. a fixed monthly brokerage contribution)
-  // is not a subscription; excluding TRANSFER_CATEGORY keeps it out of the list.
-  const txs = listTransactions(5000).filter((tx) => tx.amount > 0 && tx.category !== TRANSFER_CATEGORY)
-  const groups = new Map()
-  for (const tx of txs) {
-    const key = (tx.merchant || tx.description || 'Unknown').toLowerCase()
-    const group = groups.get(key) || {
-      merchant: tx.merchant || tx.description || 'Unknown',
-      category: tx.category,
-      amounts: [],
-      dates: [],
-      transactions: [],
-    }
-    group.amounts.push(tx.amount)
-    group.dates.push(tx.date)
-    group.transactions.push(tx)
-    groups.set(key, group)
+  // v2 detection (insights.mjs): interval cadence + amount-drift tolerance +
+  // price-increase runs, grouped per (merchant, account) so the same service on
+  // two cards yields two rows. Same export/endpoint as v1 with a SUPERSET shape
+  // (every v1 field kept). Spend/Transfer/pending filtering happens inside the
+  // pure module using the shared spend-tx definition.
+  const txs = listTransactions(5000)
+  const asOf = txs.map((tx) => tx.date).filter(Boolean).sort().at(-1) || todayText()
+  return detectSubscriptionsV2(txs, { asOf })
+}
+
+// Assembled Feature 3 insights payload for GET /api/insights. Everything is
+// computed on read from the ledger (no insight tables); asOf is the latest
+// transaction date, NOT the wall clock, so figures are stable between syncs.
+export function insightsReport() {
+  const accounts = db().prepare('SELECT * FROM accounts').all().map(accountFromRow)
+  const balances = balanceSummaryFromSnapshot({ accounts })
+  const txs = listTransactions(5000)
+  const monthlyCashflow = listCashflow()
+  const asOf = txs.map((tx) => tx.date).filter(Boolean).sort().at(-1) || todayText()
+  const month = monthText(asOf)
+  return {
+    asOf,
+    month,
+    savings: computeSavingsRates(monthlyCashflow, month),
+    forecast: computeForecast({ cashNow: balances.cash, monthlyCashflow, asOf }),
+    anomalies: detectAnomalies(txs, { asOf }),
+    subscriptions: detectSubscriptionsV2(txs, { asOf }),
   }
-  return [...groups.values()]
-    .map((group) => {
-      const avg = group.amounts.reduce((sum, amount) => sum + amount, 0) / group.amounts.length
-      const variance = group.amounts.reduce((sum, amount) => sum + Math.abs(amount - avg), 0) / group.amounts.length
-      return {
-        merchant: group.merchant,
-        category: group.category,
-        monthlyCost: Math.round(avg * 100) / 100,
-        chargeCount: group.amounts.length,
-        lastCharged: group.dates.filter(Boolean).sort().at(-1) || null,
-        cadence: 'monthly',
-        confidence: group.category === 'Subscriptions' ? 0.96 : variance < 4 && group.amounts.length >= 4 ? 0.74 : 0.42,
-      }
-    })
-    .filter((item) => item.category === 'Subscriptions' || (item.chargeCount >= 4 && item.confidence >= 0.7))
-    .sort((a, b) => b.monthlyCost - a.monthlyCost)
 }
 
 export function listCategories() {
@@ -1480,6 +1499,52 @@ export function actionQueue() {
     }
   }
 
+  // Feature 3 insights: unusual charges, subscription price hikes, and a
+  // projected end-of-month cash shortfall. Not dismissible in v3 by design —
+  // they clear when the underlying data changes.
+  const insights = insightsReport()
+  const accountNames = new Map(snapshot.accounts.map((a) => [a.id, a.name]))
+
+  // Anomalies within 30 days of asOf (ledger time), capped at 5. insights.anomalies
+  // is already sorted newest-first, so the cap keeps the most recent ones.
+  const anomalyWindowStart = addDaysText(insights.asOf, -30)
+  for (const anomaly of insights.anomalies.filter((a) => a.date >= anomalyWindowStart).slice(0, 5)) {
+    actions.push({
+      id: anomaly.id,
+      type: 'anomaly',
+      priority: anomaly.severity,
+      title: `Unusual charge: ${anomaly.merchant} $${anomaly.amount.toFixed(2)}`,
+      detail: `${anomaly.date} — ${anomaly.multiple != null ? `${anomaly.multiple}×` : 'far above'} the typical ${anomaly.baseline.basis} charge (median $${anomaly.baseline.median.toFixed(2)} across ${anomaly.baseline.sampleSize} charges).`,
+      dueDate: null,
+    })
+  }
+
+  for (const sub of insights.subscriptions) {
+    if (!sub.priceIncrease) continue
+    const increase = sub.priceIncrease
+    actions.push({
+      id: `price_increase_${sub.seriesKey}`,
+      type: 'subscription',
+      priority: 'medium',
+      title: `${sub.merchant} went up $${increase.delta.toFixed(2)}`,
+      detail: `$${increase.previousAmount.toFixed(2)} → $${increase.newAmount.toFixed(2)} starting ${increase.effectiveDate}${increase.percent != null ? ` (${increase.percent}%)` : ''}, on ${accountNames.get(sub.accountId) || 'unknown account'}.`,
+      dueDate: null,
+    })
+  }
+
+  // Approved forecast extra: projected cash shortfall for the current month.
+  if (insights.forecast.projectedEndOfMonthCash < 0) {
+    const shortfall = Math.abs(insights.forecast.projectedEndOfMonthCash)
+    actions.push({
+      id: `forecast_shortfall_${insights.forecast.month}`,
+      type: 'forecast',
+      priority: 'high',
+      title: `Projected cash shortfall of $${shortfall.toFixed(2)} by month end`,
+      detail: `At the ${insights.forecast.baselineMonths[0]}–${insights.forecast.baselineMonths[2]} baseline pace, cash ends ${insights.forecast.month} at $${insights.forecast.projectedEndOfMonthCash.toFixed(2)}.`,
+      dueDate: null,
+    })
+  }
+
   for (const doc of snapshot.documents) {
     const days = inDays(doc.dueDate)
     if (doc.status !== 'verified' && days <= 60) {
@@ -1525,12 +1590,21 @@ export function summary(snapshot = readDb()) {
   const missingDocs = snapshot.documents.filter((d) => d.status !== 'verified').length
   const actions = actionQueue().length
 
+  // Feature 3 additive fields: savings rates over complete months and the
+  // catch-up-to-baseline end-of-month cash forecast (see insights.mjs).
+  const monthlyCashflow = listCashflow()
+  const savings = computeSavingsRates(monthlyCashflow, latestMonth)
+  const forecast = computeForecast({ cashNow: balances.cash, monthlyCashflow, asOf: latestTxDate || todayText() })
+
   return {
     asOf: nowIso(),
     ...balances,
     cashRunwayMonths: spending30 > 0 ? Math.round((balances.cash / spending30) * 10) / 10 : null,
     income30,
     spending30,
+    savingsRate3m: savings.threeMonth.rate,
+    savingsRate6m: savings.sixMonth.rate,
+    forecastEndOfMonthCash: forecast.projectedEndOfMonthCash,
     accounts: snapshot.accounts.length,
     transactions: snapshot.transactions.length,
     connections: snapshot.connections.length,

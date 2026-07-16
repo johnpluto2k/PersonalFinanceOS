@@ -66,6 +66,14 @@ async function getDiningBudget(page) {
   return budgets.find((budget) => budget.category === 'Dining')
 }
 
+async function importAppleCsv(page, csv) {
+  await page.evaluate(() => document.querySelector('#toastStack')?.replaceChildren())
+  await page.getByRole('button', { name: /Apple CSV/i }).click()
+  await page.locator('#appleDialog textarea[name="csv"]').fill(csv)
+  await page.locator('#appleForm button.primary-button').click()
+  await page.waitForFunction(() => document.querySelector('#toastStack')?.textContent.includes('Imported'))
+}
+
 async function runCoreFlow(page) {
   const beforeDining = await getDiningBudget(page)
   const beforeSpend = Number(beforeDining?.spent || 0)
@@ -74,10 +82,17 @@ async function runCoreFlow(page) {
     '07/04/2026,QA Test Cafe,12.34,Uncategorized',
   ].join('\n')
 
-  await page.getByRole('button', { name: /Apple CSV/i }).click()
-  await page.locator('#appleDialog textarea[name="csv"]').fill(csv)
-  await page.locator('#appleForm button.primary-button').click()
-  await page.waitForFunction(() => document.querySelector('#toastStack')?.textContent.includes('Imported'))
+  await importAppleCsv(page, csv)
+
+  // Feature 3 (smarter insights): inject an anomalous Chipotle charge.
+  // The import endpoint hashes date+merchant+amount into the row id, so
+  // re-running this import is an id-idempotent no-op (same as the QA Test
+  // Cafe row above, which the flow also leaves in place).
+  const anomalyCsv = [
+    'Transaction Date,Description,Amount,Category',
+    '07/05/2026,Chipotle,180.00,Dining',
+  ].join('\n')
+  await importAppleCsv(page, anomalyCsv)
 
   await openView(page, 'transactions', 'Transactions', 'desktop')
   await page.locator('#txSearch').fill('QA Test Cafe')
@@ -101,6 +116,62 @@ async function runCoreFlow(page) {
   })
   if (!tx || tx.category !== 'Dining') {
     throw new Error('QA transaction was not categorized as Dining')
+  }
+}
+
+async function runInsightsChecks(page) {
+  const data = await page.evaluate(async () => {
+    const [insights, queue, summary] = await Promise.all([
+      fetch('/api/insights').then((res) => res.json()),
+      fetch('/api/action-queue').then((res) => res.json()),
+      fetch('/api/summary').then((res) => res.json()),
+    ])
+    return { insights, queue, summary }
+  })
+
+  const anomalies = data.insights?.anomalies
+  if (!Array.isArray(anomalies)) {
+    throw new Error('/api/insights did not return an anomalies array')
+  }
+  const chipotle = anomalies.find(
+    (item) => /chipotle/i.test(item.merchant || '') && Math.abs(Number(item.amount) - 180) < 0.005,
+  )
+  if (!chipotle) {
+    throw new Error(
+      `/api/insights anomalies missing the $180 Chipotle entry. Got: ${JSON.stringify(
+        anomalies.map((a) => ({ merchant: a.merchant, amount: a.amount })),
+      )}`,
+    )
+  }
+
+  const queueItems = Array.isArray(data.queue) ? data.queue : data.queue?.items
+  if (!Array.isArray(queueItems)) {
+    throw new Error('/api/action-queue did not return an item array')
+  }
+  const queueItem = queueItems.find((item) => /^Unusual charge: Chipotle/i.test(item.title || ''))
+  if (!queueItem) {
+    throw new Error(
+      `/api/action-queue missing "Unusual charge: Chipotle" item. Titles: ${JSON.stringify(
+        queueItems.map((item) => item.title),
+      )}`,
+    )
+  }
+
+  const rate = data.summary?.savingsRate3m
+  if (!Number.isFinite(rate) || rate <= -1 || rate >= 1) {
+    throw new Error(`summary.savingsRate3m is not a finite value in (-1, 1): ${rate}`)
+  }
+  const forecast = data.summary?.forecastEndOfMonthCash
+  if (!Number.isFinite(forecast)) {
+    throw new Error(`summary.forecastEndOfMonthCash is not finite: ${forecast}`)
+  }
+
+  return {
+    anomaly: chipotle,
+    queueItem: { title: queueItem.title, detail: queueItem.detail, priority: queueItem.priority, type: queueItem.type },
+    savingsRate3m: rate,
+    savingsRate6m: data.summary?.savingsRate6m,
+    forecastEndOfMonthCash: forecast,
   }
 }
 
@@ -131,6 +202,7 @@ async function main() {
     await page.locator('#netWorthValue').waitFor()
 
     await runCoreFlow(page)
+    const insights = await runInsightsChecks(page)
     await page.evaluate(() => document.querySelector('#toastStack')?.replaceChildren())
     screenshots.push(...await screenshotSections(page, 'desktop'))
 
@@ -140,7 +212,7 @@ async function main() {
     screenshots.push(...await screenshotSections(page, 'mobile'))
 
     if (errors.length) throw new Error(`Browser errors: ${errors.join(' | ')}`)
-    console.log(JSON.stringify({ ok: true, screenshots }, null, 2))
+    console.log(JSON.stringify({ ok: true, insights, screenshots }, null, 2))
   } finally {
     await browser.close()
   }

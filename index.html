@@ -119,12 +119,14 @@
                 <div><span>Assets</span><strong id="assetTotal">$0</strong></div>
                 <div><span>Debt</span><strong id="debtTotal">$0</strong></div>
                 <div><span>Runway</span><strong id="runwayValue">n/a</strong></div>
+                <div><span>EOM forecast</span><strong id="forecastValue">n/a</strong></div>
               </div>
             </article>
 
             <div class="metric-grid">
               <article class="metric-card"><span>Income</span><strong id="incomeMetric">$0</strong><small id="incomeMeta">This month</small></article>
               <article class="metric-card"><span>Spend</span><strong id="spendMetric">$0</strong><small id="spendMeta">This month</small></article>
+              <article class="metric-card"><span>Savings rate</span><strong id="savingsRateMetric">n/a</strong><small id="savingsRateMeta">Last 3 months</small></article>
               <article class="metric-card"><span>Accounts</span><strong id="accountMetric">0</strong><small id="connectionMeta">0 links</small></article>
               <article class="metric-card"><span>Actions</span><strong id="actionMetric">0</strong><small id="docMeta">0 docs</small></article>
             </div>
@@ -206,6 +208,12 @@
           </div>
           <div class="dashboard-grid two">
             <article class="panel wide"><div class="chart-frame tall"><canvas id="cashflowChart"></canvas></div></article>
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span class="label">Forecast</span><h3>Month-end projection</h3></div>
+              </div>
+              <div id="cashflowForecast" class="row-stack skeleton"></div>
+            </article>
             <article class="panel"><div id="cashflowStats" class="row-stack skeleton"></div></article>
           </div>
         </section>

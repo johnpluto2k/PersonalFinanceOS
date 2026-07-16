@@ -17,6 +17,7 @@ import {
   deleteConnection,
   deleteRule,
   deriveHealth,
+  insightsReport,
   listCashflow,
   listBudgets,
   listCategories,
@@ -210,6 +211,12 @@ async function handle(req, res) {
 
     if (req.method === 'GET' && url.pathname === '/api/action-queue') {
       return send(res, 200, actionQueue())
+    }
+
+    // Feature 3: savings rates, EOM cash forecast, spending anomalies, and
+    // subscription price increases — all computed on read in store/insights.
+    if (req.method === 'GET' && url.pathname === '/api/insights') {
+      return send(res, 200, insightsReport())
     }
 
     if (req.method === 'GET' && url.pathname === '/api/cashflow') {

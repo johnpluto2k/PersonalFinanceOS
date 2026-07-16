@@ -1037,9 +1037,12 @@ export function addSyncEvent(event) {
 }
 
 export function listTransactions(limit = 100) {
+  // Clamp to [1, 5000]: a negative LIMIT means "unbounded" to SQLite, so an
+  // unchecked ?limit=-1 would dump the entire ledger. NaN/0 fall back to 100.
+  const capped = Math.min(Math.max(Math.floor(Number(limit) || 100), 1), 5000)
   return db()
     .prepare('SELECT * FROM transactions ORDER BY date DESC, created_at DESC LIMIT ?')
-    .all(Math.min(Number(limit || 100), 5000))
+    .all(capped)
     .map(transactionFromRow)
 }
 
@@ -1450,6 +1453,11 @@ export function insightsReport() {
   const report = {
     asOf,
     month,
+    // Additive truncation signal: the detectors read at most the 5000 newest
+    // transactions (the listTransactions cap, unchanged). On a ledger bigger
+    // than that, older history silently falls out of every insight input —
+    // this flag makes that visible to clients/audits instead of silent.
+    inputTruncated: Number(version.txCount) > txs.length,
     savings: computeSavingsRates(monthlyCashflow, month),
     forecast: computeForecast({ cashNow: balances.cash, monthlyCashflow, asOf }),
     anomalies: detectAnomalies(txs, { asOf }),

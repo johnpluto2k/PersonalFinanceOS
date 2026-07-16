@@ -1,4 +1,4 @@
-# v3 orchestration handoff — state as of 2026-07-15
+# v3 orchestration handoff — state as of 2026-07-16 (run complete)
 
 Working tree: `C:\Users\yohan\orca\workspaces\PersonalFinanceOS\orca-orchestration-run`
 (branch `johnpluto2k/orca-orchestration-run`). Spec: `C:/ClaudeProjects/PersonalFinanceOS/V3-ORCA-SPEC.md`.
@@ -77,17 +77,34 @@ was interrupted by a session limit and is NOT applied. Dispatch to pfos-backend-
 - Whole Foods/City Utilities price badges are legitimate per the algorithm (seeded linear drift compresses into a
   step); revisit if John finds grocery "subscriptions" noisy.
 
-## Remaining spec work
+## Remaining spec work — ALL COMPLETE as of 2026-07-16
 
-- **Feature 4**: Orca automations — prompt files + DISABLED automations (`automation_nightly_prompt.md`,
-  `automation_weekly_money_prompt.md`), created via `orca automations create --disabled --json`, tested via
-  `orca automations run <id> --json`, enable commands handed to John at Gate 2. Never enable them yourself.
-- **Feature 5**: polish & hardening — `node --test` suite covering registry/mock cursor/retry/detectors/import dedup
-  (insights tests exist: backend/test/insights.test.mjs, 20 passing); security pass (tokens, provider inputs, CSV
-  parsing); error/empty/loading states; extend qa-playwright.cjs (Connections health states are covered; add
-  insights); README API table for every new endpoint.
-- **End-of-run report**: Agent HQ report per team_run_prompt.md (`ObsidianVault\Reports\<date> Finance team.md` +
-  Finance-team row), including the exact commands for when John's Plaid credentials arrive.
+- **Feature 4 DONE**: prompt files committed (49c2aba); both automations created disabled, test-run successfully,
+  then **enabled with John's explicit approval in chat**: "Finance nightly" (daily 2:30 AM ET, id d9c62e20) and
+  "Finance weekly money" (Sunday 8:00 AM ET, id bc78b560). Manage: `orca automations list` / `edit <id> --disabled`.
+- **Feature 5 DONE**: test suite 32 → 75 passing (`node --test "backend/test/*.test.mjs"` — directory form doesn't
+  discover on this setup; suites: providers, mockSync, syncEngine, appleImport, storeHardening, insights) with an
+  injectable `registerProvider()` added for testability. Security pass: CSRF origin guard on non-GET (loopback-only),
+  15 MB body cap → 413, invalid JSON → 400, `listTransactions` limit clamped [1,5000], Apple import now parses the
+  real `Amount (USD)` header (genuine Wallet exports previously imported as $0!) and `(45.00)` negatives. JSON
+  responses carry `; charset=utf-8`; insights payload gains additive `inputTruncated`. UI: continuous account-history
+  lines (spanGaps), distinct series palette, width-aware time ticks (4+ on mobile), precision money ticks (no dup
+  $0k), 2-line clamp on action-queue + tax-checklist titles, ISO month tokens humanized ("July 2026"), full
+  error/empty/loading pass with retry CTAs. qa-playwright.cjs extended with insights UI checks (anomaly row/chip,
+  savings + forecast tiles, Netflix $17.49 card + ↑$2.00 badge). QA exit 0; audit PASS 5/5 to the cent.
+- **End-of-run report**: filed 2026-07-16 (`ObsidianVault\Reports\2026-07-16 Finance team.md` + Finance-team row).
+
+## New known issues (found during F5, deferred)
+
+- **Apple import `body.balance` ineffective (latent, no damage)**: `POST /api/import/apple-card`
+  (server.mjs ~338–363) sets the account balance then `writeDb(db)` re-upserts the stale pre-import snapshot
+  account, rolling it back — with a transient balance=0 window mid-request. Frontend never sends `balance`, so
+  nothing user-facing today. Fix pattern already exists: mirror into `db.accounts` like providers/mock.mjs:326–333.
+- transactions.csv export doesn't neutralize leading `=`/`+`/`@` for spreadsheets (deliberate: stored-as-data per
+  spec; blanket prefixing would corrupt negative amounts).
+- Unauthenticated webhook stub stores arbitrary JSON (bounded by the 15 MB cap, loopback + CSRF-guarded).
+- `POST /api/manual/accounts` accepts caller-supplied `id` that can overwrite a provider account (local single-user).
+- Desktop Spend Mix donut center label slightly cramped (cosmetic, QA note).
 
 ## When Plaid credentials arrive (John)
 

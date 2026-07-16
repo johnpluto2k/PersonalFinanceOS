@@ -73,7 +73,7 @@ function corsHeaders(res) {
 
 function send(res, status, body) {
   res.writeHead(status, {
-    'Content-Type': 'application/json',
+    'Content-Type': 'application/json; charset=utf-8',
     ...corsHeaders(res),
   })
   res.end(JSON.stringify(body, null, 2))
@@ -87,12 +87,33 @@ function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') 
   res.end(body)
 }
 
+// Upper bound on request bodies. The largest legitimate payload is a full-year
+// Apple Card CSV wrapped in JSON (well under 1 MB); 15 MB leaves generous head-
+// room while making an unbounded-buffer memory exhaustion impossible.
+const MAX_JSON_BODY_BYTES = 15 * 1024 * 1024
+
 async function readJson(req) {
   const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
+  let total = 0
+  for await (const chunk of req) {
+    total += chunk.length
+    if (total > MAX_JSON_BODY_BYTES) {
+      const err = new Error('request body too large')
+      err.status = 413
+      throw err
+    }
+    chunks.push(chunk)
+  }
   const text = Buffer.concat(chunks).toString('utf8')
   if (!text) return {}
-  return JSON.parse(text)
+  try {
+    return JSON.parse(text)
+  } catch {
+    // A malformed body is the caller's error, not a 500 server fault.
+    const err = new Error('request body is not valid JSON')
+    err.status = 400
+    throw err
+  }
 }
 
 function sendStatic(res, fileName) {
@@ -147,6 +168,15 @@ function addManualAccount(body) {
 async function handle(req, res) {
   res.__acao = allowedOrigin(req.headers.origin)
   if (req.method === 'OPTIONS') return send(res, 200, { ok: true })
+  // CSRF guard for state-changing methods. Browsers attach an Origin header to
+  // cross-site POSTs even when the response is unreadable (mode:'no-cors' with a
+  // text/plain body needs no preflight), so a malicious page could otherwise
+  // blindly trigger sync/import/delete against 127.0.0.1. Same-origin requests
+  // carry this server's own origin (allowed) and curl/PowerShell send no Origin
+  // header at all (allowed), so legitimate flows are unaffected.
+  if (req.method !== 'GET' && req.headers.origin && !res.__acao) {
+    return send(res, 403, { error: 'cross-origin write refused' })
+  }
   const url = new URL(req.url, `http://${req.headers.host}`)
 
   try {

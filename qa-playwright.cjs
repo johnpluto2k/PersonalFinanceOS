@@ -175,6 +175,57 @@ async function runInsightsChecks(page) {
   }
 }
 
+async function runInsightsUiChecks(page) {
+  // Fresh render so the Overview reflects the transactions injected by the
+  // core flow (state is fetched at load, not on view switch).
+  await page.reload({ waitUntil: 'networkidle' })
+  await waitForTitle(page, 'Overview')
+
+  const queueRow = page.locator('#actionQueue', { hasText: 'Unusual charge: Chipotle' })
+  await queueRow.waitFor({ timeout: 5000 }).catch(() => {
+    throw new Error('Overview action queue does not render the "Unusual charge: Chipotle" anomaly row')
+  })
+  const anomalyChip = await page.locator('#actionQueue .chip', { hasText: /anomaly/i }).count()
+  if (anomalyChip === 0) {
+    throw new Error('Anomaly row in the action queue is missing its "anomaly" chip')
+  }
+
+  const savingsText = (await page.locator('#savingsRateMetric').textContent())?.trim()
+  if (!savingsText || savingsText === 'n/a' || !/%/.test(savingsText) || /NaN/i.test(savingsText)) {
+    throw new Error(`Savings-rate tile is not rendering a percentage: "${savingsText}"`)
+  }
+  const forecastText = (await page.locator('#forecastValue').textContent())?.trim()
+  if (!forecastText || forecastText === 'n/a' || !/\$/.test(forecastText) || /NaN/i.test(forecastText)) {
+    throw new Error(`EOM forecast tile is not rendering a money value: "${forecastText}"`)
+  }
+
+  await openView(page, 'subscriptions', 'Subscriptions', 'desktop')
+  const netflixCard = page.locator('#subscriptionGrid article', { hasText: 'Netflix' }).first()
+  await netflixCard.waitFor({ timeout: 5000 }).catch(() => {
+    throw new Error('Subscriptions grid does not render a Netflix card')
+  })
+  const netflixText = await netflixCard.textContent()
+  if (!/17\.49/.test(netflixText)) {
+    throw new Error(`Netflix card headline is not the current price $17.49: "${netflixText.slice(0, 200)}"`)
+  }
+  const priceUpBadge = await netflixCard.locator('.price-up', { hasText: /2\.00/ }).count()
+  if (priceUpBadge === 0) {
+    throw new Error('Netflix card is missing its "↑ $2.00" price-increase badge')
+  }
+  const summaryText = (await page.locator('#subscriptionSummary').textContent())?.trim()
+  if (!summaryText || !/recurring/i.test(summaryText) || !/\$/.test(summaryText)) {
+    throw new Error(`Subscription summary strip is not rendering totals: "${summaryText}"`)
+  }
+
+  await openView(page, 'overview', 'Overview', 'desktop')
+  return {
+    savingsTile: savingsText,
+    forecastTile: forecastText,
+    netflixBadge: true,
+    subscriptionSummary: summaryText.replace(/\s+/g, ' ').slice(0, 120),
+  }
+}
+
 async function screenshotSections(page, mode) {
   const shots = []
   for (const [view, title] of sections) {
@@ -203,6 +254,7 @@ async function main() {
 
     await runCoreFlow(page)
     const insights = await runInsightsChecks(page)
+    const insightsUi = await runInsightsUiChecks(page)
     await page.evaluate(() => document.querySelector('#toastStack')?.replaceChildren())
     screenshots.push(...await screenshotSections(page, 'desktop'))
 
@@ -212,7 +264,7 @@ async function main() {
     screenshots.push(...await screenshotSections(page, 'mobile'))
 
     if (errors.length) throw new Error(`Browser errors: ${errors.join(' | ')}`)
-    console.log(JSON.stringify({ ok: true, insights, screenshots }, null, 2))
+    console.log(JSON.stringify({ ok: true, insights, insightsUi, screenshots }, null, 2))
   } finally {
     await browser.close()
   }

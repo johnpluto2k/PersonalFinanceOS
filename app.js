@@ -15,6 +15,7 @@ const state = {
   history: { snapshots: [], cashflow: [], categories: [] },
   subscriptions: [],
   insights: null,
+  insightsError: null,
   categories: [],
   view: 'overview',
   historyRange: '1Y',
@@ -48,7 +49,10 @@ const viewMeta = {
   connections: ['Providers', 'Connections'],
 }
 
-const chartColors = ['#3ddc97', '#a78bfa', '#38bdf8', '#f59e0b', '#fb7185', '#22c55e', '#e879f9', '#f97316']
+// Categorical palette — kept in sync with seriesPalette in charts.js so the
+// donut legend and account-history legend read as one system. Every entry is
+// a clearly distinct hue (the old list had two near-identical greens).
+const chartColors = ['#3ddc97', '#38bdf8', '#a78bfa', '#f59e0b', '#fb7185', '#e879f9', '#2dd4bf', '#94a3b8']
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -106,6 +110,22 @@ const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 function monthShort(ym) {
   const n = Number(String(ym || '').slice(5, 7))
   return MONTH_SHORT[n - 1] || String(ym || '')
+}
+
+const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+// '2026-07' -> 'July 2026'; anything unparseable falls through untouched.
+function monthLong(ym) {
+  const s = String(ym || '')
+  const match = /^(\d{4})-(\d{2})$/.exec(s)
+  const name = match ? MONTH_LONG[Number(match[2]) - 1] : null
+  return name ? `${name} ${match[1]}` : s
+}
+
+// Humanize bare ISO month tokens inside prose ("over budget in 2026-07" ->
+// "over budget in July 2026"). Full dates like 2026-07-14 are left alone.
+function humanizeMonthTokens(text) {
+  return String(text ?? '').replace(/\b(\d{4}-(?:0[1-9]|1[0-2]))\b(?!-\d)/g, (token) => monthLong(token))
 }
 
 // ['2026-04','2026-05','2026-06'] -> 'Apr–Jun' (order-insensitive).
@@ -189,7 +209,11 @@ async function request(path, options = {}) {
     },
   })
   const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(json.error || `${path} returned ${res.status}`)
+  if (!res.ok) {
+    const error = new Error(json.error || `${path} returned ${res.status}`)
+    error.status = res.status
+    throw error
+  }
   return json
 }
 
@@ -242,6 +266,17 @@ function emptyState(icon, title, message, ctaHtml = '') {
       ${ctaHtml ? `<div class="empty-cta">${ctaHtml}</div>` : ''}
     </div>
   `
+}
+
+// Fetch-failure state: same visual pattern as emptyState, plus a retry CTA.
+// Rendered wherever a panel would otherwise be stuck on its skeleton forever.
+function errorState(message, title = "Couldn't load data") {
+  return emptyState(
+    '⚠️',
+    title,
+    message || 'The backend did not respond.',
+    '<button class="ghost-button load-retry" type="button">Retry</button>',
+  )
 }
 
 function listRow({ title, detail, right, chip, tone = '' }) {
@@ -472,8 +507,8 @@ function renderOverview() {
   setAnimated('spendMetric', s.spending30, (n) => fmtMoney(n))
   setAnimated('accountMetric', s.accounts, (n) => String(Math.round(n)))
   setAnimated('actionMetric', s.actions, (n) => String(Math.round(n)))
-  setText('incomeMeta', s.latestMonth || 'This month')
-  setText('spendMeta', s.latestMonth || 'This month')
+  setText('incomeMeta', s.latestMonth ? monthLong(s.latestMonth) : 'This month')
+  setText('spendMeta', s.latestMonth ? monthLong(s.latestMonth) : 'This month')
   setText('connectionMeta', `${s.connections || 0} links`)
   setText('docMeta', `${s.missingDocs || 0} docs`)
 
@@ -501,8 +536,9 @@ function renderActionQueue() {
     return
   }
   target.innerHTML = state.actions.slice(0, 6).map((action) => listRow({
-    title: action.title,
-    detail: action.detail,
+    // Backend copy can carry raw ISO month tokens ("2026-07") — humanize them.
+    title: humanizeMonthTokens(action.title),
+    detail: humanizeMonthTokens(action.detail),
     // Anomalies get a named chip so unusual charges read differently from
     // routine due-date items; tone still follows priority (high = red).
     chip: action.type === 'anomaly' ? 'anomaly' : action.priority,
@@ -522,7 +558,7 @@ function renderBudgetPulse() {
     .slice(0, 5)
     .map((budget) => listRow({
       title: budget.category,
-      detail: `${budget.percent}% used in ${budget.month}`,
+      detail: `${budget.percent}% used in ${monthLong(budget.month)}`,
       right: budget.remaining < 0 ? `${fmtMoney(Math.abs(budget.remaining))} over` : `${fmtMoney(budget.remaining)} left`,
       chip: budget.remaining < 0 ? 'over' : 'on track',
       tone: budget.remaining < 0 ? 'bad' : budget.percent > 80 ? 'warn' : 'good',
@@ -654,7 +690,7 @@ function renderBudgets() {
     </div>`
     return financeCard({
       title: budget.category,
-      meta: budget.month,
+      meta: monthLong(budget.month),
       value: `${Math.round(budget.percent)}%`,
       chip: over ? 'over' : budget.percent > 80 ? 'watch' : 'ok',
       tone: over ? 'bad' : budget.percent > 80 ? 'warn' : 'good',
@@ -668,6 +704,11 @@ function renderBudgets() {
 function renderCashflowForecast() {
   const target = clearSkeleton('cashflowForecast')
   if (!target) return
+  // A failed /api/insights fetch must read as an error, not as "no forecast".
+  if (state.insightsError) {
+    target.innerHTML = errorState(state.insightsError, "Couldn't load insights")
+    return
+  }
   const f = state.insights?.forecast
   if (!f || f.projectedEndOfMonthCash == null || !Number.isFinite(Number(f.projectedEndOfMonthCash))) {
     target.innerHTML = emptyState('🔮', 'No forecast yet', 'Projections appear once a complete month of history exists')
@@ -724,7 +765,7 @@ function renderCashflow() {
     return
   }
   target.innerHTML = state.cashflow.slice(0, 8).map((month) => listRow({
-    title: month.month,
+    title: monthLong(month.month),
     detail: `${month.count} transactions`,
     right: `Net ${fmtMoney(month.net)}`,
     chip: month.net >= 0 ? 'positive' : 'negative',
@@ -738,7 +779,7 @@ function renderSubscriptions() {
     initSubscriptionChart('subscriptionChart', state.subscriptions)
   }
 
-  const target = $('subscriptionGrid')
+  const target = clearSkeleton('subscriptionGrid')
   const summary = $('subscriptionSummary')
   if (!state.subscriptions.length) {
     if (summary) summary.innerHTML = ''
@@ -1316,20 +1357,50 @@ async function load({ quiet = false } = {}) {
         get('/api/subscriptions'),
         get('/api/categories'),
         get('/api/providers'),
-        // Insights is additive — an older backend without /api/insights should
-        // degrade to empty states, not take down the whole dashboard load.
-        get('/api/insights').catch(() => null),
+        // Insights is additive — an older backend without /api/insights (404)
+        // should degrade to empty states, not take down the whole dashboard
+        // load. Any other failure is a real error and must surface as one.
+        get('/api/insights').catch((err) => (err?.status === 404 ? null : { __failed: err.message || 'Insights request failed' })),
       ])
-    Object.assign(state, { health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers, insights })
+    state.insightsError = insights?.__failed || null
+    Object.assign(state, {
+      health, summary, accounts, connections, transactions, actions, cashflow, documents, taxes, budgets, rules, history, subscriptions, categories, providers,
+      insights: insights?.__failed ? null : insights,
+    })
     render()
   } catch (err) {
+    renderLoadError(err.message)
     if (!quiet) toast(`Backend not ready: ${err.message}`, 'error')
   }
 }
 
+// When the initial load fails wholesale, every panel would otherwise shimmer
+// forever. Swap still-loading (skeleton or empty) containers to a visible
+// error state with a retry CTA; panels that already rendered data keep it.
+function renderLoadError(message) {
+  const panels = [
+    'actionQueue', 'budgetPulse', 'categoryDonut', 'recentTransactions',
+    'cashflowForecast', 'cashflowStats', 'connectionList', 'providerPanel',
+    'taxTaskList', 'deductionTracker', 'budgetGrid', 'subscriptionGrid',
+    'accountGrid', 'ruleGrid', 'documentGrid',
+  ]
+  for (const id of panels) {
+    const el = $(id)
+    if (!el) continue
+    if (el.classList.contains('skeleton') || el.childElementCount === 0) {
+      el.classList.remove('skeleton')
+      el.innerHTML = errorState(message)
+    }
+  }
+}
+
 async function refreshHistory() {
-  state.history = await get(`/api/history?range=${encodeURIComponent(state.historyRange)}`)
-  renderOverview()
+  try {
+    state.history = await get(`/api/history?range=${encodeURIComponent(state.historyRange)}`)
+    renderOverview()
+  } catch (err) {
+    toast(`Couldn't load history: ${err.message}`, 'error')
+  }
 }
 
 function openCategoryMenu(event, txId, currentCategory) {
@@ -1419,6 +1490,18 @@ function bindEvents() {
     // Close category menus when clicking outside
     if (!event.target.closest('.category-cell') && !event.target.closest('.category-menu')) {
       closeAllMenus()
+    }
+
+    // Retry CTA inside a fetch-failure error state.
+    const retryBtn = event.target.closest('.load-retry')
+    if (retryBtn) {
+      retryBtn.disabled = true
+      await load()
+      // On success the panel re-rendered and the button is gone; on another
+      // failure it survives (renderLoadError skips non-empty panels), so
+      // re-enable it for the next attempt.
+      retryBtn.disabled = false
+      return
     }
 
     const moreMenuBtn = event.target.closest('#moreMenuBtn')

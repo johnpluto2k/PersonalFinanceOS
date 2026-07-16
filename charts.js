@@ -21,8 +21,70 @@ const chartColorPalette = {
   line: getChartColor('--line', '#25303b'),
 }
 
+// Distinct categorical palette for multi-series charts. Every entry is a
+// clearly different hue — no near-duplicates (the old palette repeated the
+// accent green and cyan, which made e.g. Demo Checking vs Roth IRA legend
+// colors indistinguishable).
+const seriesPalette = [
+  '#3ddc97', // green (accent)
+  '#38bdf8', // sky
+  '#a78bfa', // violet
+  '#f59e0b', // amber
+  '#fb7185', // rose
+  '#e879f9', // fuchsia
+  '#2dd4bf', // teal
+  '#94a3b8', // slate
+]
+
 // Store active charts for cleanup
 const activeCharts = new Map()
+
+const TICK_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// '2026-07-15' -> 'Jul 15'; '2026-07' -> 'Jul 2026'; anything else unchanged.
+function shortDateTick(label) {
+  const s = String(label || '')
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(s)
+  if (!m) return s
+  const mon = TICK_MONTHS[Number(m[2]) - 1] || m[2]
+  return m[3] ? `${mon} ${Number(m[3])}` : `${mon} ${m[1]}`
+}
+
+// Width-aware x-axis ticks for time-series charts. Chart.js autoSkip combined
+// with the old modulo callbacks collapsed narrow viewports to a single tick;
+// instead we disable autoSkip and space 4-9 ticks ourselves from the actual
+// chart width (recomputed on every resize because ticks rebuild).
+function timeAxisTicks(labels) {
+  return {
+    color: chartColorPalette.textSecondary,
+    maxRotation: 0,
+    autoSkip: false,
+    callback(value, index) {
+      const count = labels.length
+      if (!count) return ''
+      const width = this.chart?.width || 800
+      const target = width < 420 ? 4 : width < 700 ? 6 : 9
+      const step = Math.max(1, Math.ceil(count / target))
+      if (index % step !== 0) return ''
+      return shortDateTick(labels[index])
+    },
+  }
+}
+
+// Precision-aware money ticks: only abbreviate to 'k' when the value is large
+// enough to survive it, keep one decimal under $100k. The old blanket
+// (value/1000).toFixed(0) rendered sub-$1k axes as duplicate '$0k'/'$1k' rows.
+function moneyTick(value) {
+  const n = Number(value) || 0
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1000) {
+    const k = abs / 1000
+    const text = k >= 100 || Number.isInteger(k) ? String(Math.round(k)) : String(Math.round(k * 10) / 10)
+    return `${sign}$${text}k`
+  }
+  return `${sign}$${Math.round(abs).toLocaleString('en-US')}`
+}
 
 // Destroy previous chart if it exists
 function destroyChart(chartId) {
@@ -64,7 +126,9 @@ function initNetWorthChart(canvasId, data = [], range = '1Y') {
         backgroundColor: chartColorPalette.accent.replace(')', ', 0.1)').replace('rgb', 'rgba'),
         borderWidth: 2,
         fill: true,
-        pointRadius: 3,
+        spanGaps: true,
+        pointRadius: 0,
+        pointHitRadius: 8,
         pointBackgroundColor: chartColorPalette.accent,
         pointBorderColor: chartColorPalette.accent,
         pointHoverRadius: 5,
@@ -101,7 +165,7 @@ function initNetWorthChart(canvasId, data = [], range = '1Y') {
           beginAtZero: true,
           ticks: {
             color: chartColorPalette.textSecondary,
-            callback: (value) => '$' + (value / 1000).toFixed(0) + 'k',
+            callback: moneyTick,
           },
           grid: {
             color: chartColorPalette.line,
@@ -109,15 +173,7 @@ function initNetWorthChart(canvasId, data = [], range = '1Y') {
           },
         },
         x: {
-          ticks: {
-            color: chartColorPalette.textSecondary,
-            maxRotation: 0,
-            // Show every 7th label on mobile, more frequently on desktop
-            callback: function(value, index) {
-              const step = labels.length > 30 ? 7 : 3
-              return index % step === 0 ? labels[index] : ''
-            },
-          },
+          ticks: timeAxisTicks(labels),
           grid: {
             display: false,
             drawBorder: false,
@@ -218,7 +274,8 @@ function initBudgetChart(canvasId, data = []) {
           beginAtZero: true,
           ticks: {
             color: chartColorPalette.textSecondary,
-            callback: (value) => '$' + (value / 1000).toFixed(0) + 'k',
+            callback: moneyTick,
+            maxTicksLimit: 8,
           },
           grid: {
             color: chartColorPalette.line,
@@ -349,7 +406,8 @@ function initCashflowChart(canvasId, data = []) {
           beginAtZero: true,
           ticks: {
             color: chartColorPalette.textSecondary,
-            callback: (value) => '$' + (Math.abs(value) / 1000).toFixed(0) + 'k',
+            callback: (value) => moneyTick(Math.abs(value)),
+            maxTicksLimit: 8,
           },
           grid: {
             color: chartColorPalette.line,
@@ -495,30 +553,28 @@ async function initAccountChart(canvasId, accounts = []) {
     const dates = Array.from(dateMap.keys()).sort()
     const labels = dates
 
-    // Create dataset for each account
-    const palette = [
-      chartColorPalette.accent,
-      chartColorPalette.cyan,
-      chartColorPalette.violet,
-      chartColorPalette.warning,
-      chartColorPalette.positive,
-      '#ff6b9d',
-      '#38bdf8',
-      '#fbbf24',
-    ]
-
-    const datasets = accounts.map((acc, idx) => ({
-      label: acc.name,
-      data: dates.map(date => dateMap.get(date)[acc.id] || null),
-      borderColor: palette[idx % palette.length],
-      backgroundColor: 'transparent',
-      borderWidth: 2,
-      pointRadius: 2,
-      pointBackgroundColor: palette[idx % palette.length],
-      pointBorderColor: palette[idx % palette.length],
-      pointHoverRadius: 5,
-      tension: 0.4,
-    }))
+    // Create dataset for each account — one clearly distinct color per series
+    // (the old list repeated accent green and cyan, so two accounts could
+    // render in the same color). Dates missing a snapshot for an account come
+    // through as null; spanGaps bridges them so each history reads as a
+    // continuous line instead of disconnected dots.
+    const datasets = accounts.map((acc, idx) => {
+      const color = seriesPalette[idx % seriesPalette.length]
+      return {
+        label: acc.name,
+        data: dates.map(date => dateMap.get(date)[acc.id] ?? null),
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        spanGaps: true,
+        pointRadius: 0,
+        pointHitRadius: 8,
+        pointBackgroundColor: color,
+        pointBorderColor: color,
+        pointHoverRadius: 4,
+        tension: 0.3,
+      }
+    })
 
     const ctx = canvas.getContext('2d')
     const chart = new Chart(ctx, {
@@ -560,7 +616,7 @@ async function initAccountChart(canvasId, accounts = []) {
           y: {
             ticks: {
               color: chartColorPalette.textSecondary,
-              callback: (value) => '$' + (value / 1000).toFixed(0) + 'k',
+              callback: moneyTick,
             },
             grid: {
               color: chartColorPalette.line,
@@ -568,14 +624,7 @@ async function initAccountChart(canvasId, accounts = []) {
             },
           },
           x: {
-            ticks: {
-              color: chartColorPalette.textSecondary,
-              maxRotation: 0,
-              callback: function(value, index) {
-                const step = labels.length > 30 ? 30 : 15
-                return index % step === 0 ? labels[index] : ''
-              },
-            },
+            ticks: timeAxisTicks(labels),
             grid: {
               display: false,
               drawBorder: false,

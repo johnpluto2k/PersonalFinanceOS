@@ -689,6 +689,21 @@ h3 {
   text-overflow: ellipsis;
 }
 
+/* Action-queue titles are sentences ("Subscriptions is over budget") — a
+   single nowrap line ellipsed them too aggressively. Let them wrap to two
+   lines before truncating; the clamp keeps row height bounded so the layout
+   stays stable. Scoped to the queue: generic row titles (often single long
+   words like category names) keep end-ellipsis instead of mid-word breaks. */
+#actionQueue .list-row strong,
+#taxTaskList .list-row strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
 .list-row p,
 .finance-card p {
   margin: var(--space-xs) 0 0;

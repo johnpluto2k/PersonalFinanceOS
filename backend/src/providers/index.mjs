@@ -78,6 +78,28 @@ const PROVIDERS = new Map([
   [mockProvider.id, mockProvider],
 ])
 
+const ADAPTER_METHODS = ['isConfigured', 'createLinkToken', 'exchangePublicToken', 'syncConnection', 'check']
+
+// Register an additional adapter (future providers, and injectable fakes in
+// the test suite). The shape must match the uniform adapter contract above.
+// Duplicate ids are refused so a registration can never silently replace the
+// built-in plaid/mock adapters.
+export function registerProvider(provider) {
+  if (!provider || typeof provider !== 'object') {
+    throw new Error('provider adapter object is required')
+  }
+  const id = String(provider.id || '')
+  if (!id) throw new Error('provider.id is required')
+  if (PROVIDERS.has(id)) throw new Error(`provider already registered: ${id}`)
+  for (const method of ADAPTER_METHODS) {
+    if (typeof provider[method] !== 'function') {
+      throw new Error(`provider.${method} must be a function`)
+    }
+  }
+  PROVIDERS.set(id, provider)
+  return provider
+}
+
 export function getProvider(id) {
   return PROVIDERS.get(String(id || '')) || null
 }

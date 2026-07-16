@@ -39,11 +39,11 @@ http://127.0.0.1:8787/
 | `GET` | `/api/accounts/:id/history?range=1M\|3M\|1Y\|All` | Per-account balance history as `{ accountId, range, kind, currency, snapshots: [{ date, balance }] }`, reconstructed backward from the current balance through the account's transactions (asset kinds move by `-amount`, credit/debt kinds by `+amount`; integer-cent math). Always includes a point for today equal to the current balance, so an account with no in-range transactions still charts a flat line. `404` unknown account, `400` unknown range |
 | `GET` | `/api/connections` | Linked provider connections with sync status (`lastSyncedAt`, `lastError`) and health fields: `health` (`healthy`/`degraded`/`down`), `consecutiveFailures`, `lastErrorClass` |
 | `DELETE` | `/api/connections/:id` | Unlink a connection and remove only its provider-linked accounts and transactions (manual + Apple import data untouched) |
-| `GET` | `/api/transactions?limit=100` | Unified transaction ledger |
+| `GET` | `/api/transactions?limit=100` | Unified transaction ledger. `limit` is clamped to `[1, 1000]` (non-numeric falls back to 100; a negative value would otherwise mean *unlimited* to SQLite) |
 | `GET` | `/api/transactions.csv` | CSV export of the unified ledger |
 | `PATCH` | `/api/transactions/:id` | Recategorize a transaction and optionally create an automation rule |
 | `GET` | `/api/action-queue` | Highest-priority money/tax/sync actions. Includes insight items: `anomaly` (unusual charges within 30 days of the ledger's latest date, capped at 5, priority = severity), `subscription` (price increases, e.g. "Netflix went up $2.00"), and `forecast` (high-priority projected cash shortfall when `projectedEndOfMonthCash < 0`) |
-| `GET` | `/api/insights` | Full insights payload: `{ asOf, month, savings, forecast, anomalies, subscriptions }` — all computed on read from the ledger (no insight tables). `asOf` is the latest transaction date, not the wall clock |
+| `GET` | `/api/insights` | Full insights payload: `{ asOf, month, inputTruncated, savings, forecast, anomalies, subscriptions }` — all computed on read from the ledger (no insight tables). `asOf` is the latest transaction date, not the wall clock. `inputTruncated` is `true` when the ledger holds more than the 5000 newest transactions the detectors read (see Insights algorithms) |
 | `GET` | `/api/cashflow` | Monthly income/spending summary (includes pending rows; unchanged — insight forecast/savings use their own pending-excluded buckets, see Insights algorithms) |
 | `GET` | `/api/history?range=1M` | Net-worth snapshots, cashflow bars, and category spend for charting |
 | `GET` | `/api/budgets` | Monthly budgets with spend, delta, progress, and top merchants |
@@ -68,9 +68,18 @@ http://127.0.0.1:8787/
 | `POST` | `/api/sync` | Sync linked provider accounts; optional JSON body `{ connectionId }` syncs just that connection, otherwise all active connections of every registered provider. Each connection syncs through the resilient sync engine: errors are classified (`config`/`auth`/`rate-limit`/`provider-down`/`unknown`), transient classes (`provider-down`, `rate-limit`) retry up to 3 attempts with exponential backoff + half jitter (~500ms base, 2s cap), permanent classes fail fast, and failures never abort other connections. Failed result entries carry `errorClass` and `attempts`; consecutive failures drive the connection `health` field |
 | `POST` | `/api/webhooks/plaid` | Plaid webhook receiver stub |
 
+### Request handling and hardening (v3 Feature 5)
+
+- All JSON responses are served as `application/json; charset=utf-8`.
+- Request bodies are capped at 15 MB (`413 request body too large`); a body that is not valid JSON returns `400`, not `500`.
+- CSRF guard: any non-GET request carrying an `Origin` header that is not this server's own loopback origin is refused with `403 cross-origin write refused`. Browsers attach `Origin` to cross-site POSTs even in `no-cors` mode, so a malicious page can no longer blind-fire sync/import/delete against `127.0.0.1`. Same-origin app requests and header-less clients (curl, `Invoke-RestMethod`) are unaffected, and CORS reads were already refused via the strict per-origin ACAO policy.
+- Provider tokens only ever exist encrypted (AES-256-GCM via `cryptoVault.mjs`): `/api/connections` serves a scrubbed public shape, no endpoint or log line carries a token, and the test suite asserts the raw SQLite/WAL bytes never contain a plaintext token.
+
 ## Insights algorithms
 
 All detection lives in the pure module `src/insights.mjs` (no DB imports; unit-tested via `npm run test`). `store.mjs` assembles `GET /api/insights` from the ledger on read — there are no insight tables and no schema change. Money math runs in integer cents. This section is the auditor's contract: every threshold used, exactly.
+
+**Input cap**: every detector reads at most the 5000 newest transactions (`listTransactions(5000)`, unchanged). On a bigger ledger the oldest history silently falls out of the detectors' view, so the payload carries the additive flag `inputTruncated: true` (`false` whenever the whole ledger fits). Existing fields are unchanged.
 
 Shared definitions:
 
@@ -132,11 +141,47 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8787/api/import/apple-card `
   -Body (@{ csv = $csv } | ConvertTo-Json)
 ```
 
+Parsing notes (v3 Feature 5 fixes):
+
+- The real export column `Amount (USD)` is recognized (previously only a bare `Amount` header was, so genuine Wallet exports imported with amount 0). Accounting-style `(45.00)` negatives parse as `-45.00` (previously they became 0).
+- Rows with neither a valid date nor a non-zero amount (summary/total lines, blank separators, truncated rows) are skipped without aborting the rest of the import.
+- Row identity is `sha1(date + merchant + amount + daily cash)`, so re-importing the same CSV upserts onto the same ids — zero new rows — while two same-day/same-amount charges at *different* merchants stay distinct. Note: because amount participates in identity, rows previously imported with a zero amount by the two bugs above will import once more under their corrected ids.
+- Formula-injection characters (`=`, `+`, `@`, ...) in CSV fields are stored as inert data; CSV content never reaches a response header or file path.
+
 ## Provider plan
 
 Plaid is the first adapter because it covers broad US bank/card/investment data and has Link, Transactions Sync, Liabilities, and Investments APIs. The adapter boundary is intentionally thin so Teller, MX, Finicity, SimpleFIN, or a custom CSV importer can be added without rewriting the rest of the app.
 
 Adapters live in `src/providers/` and register in `src/providers/index.mjs` with a uniform shape: `{ id, label, isConfigured(), createLinkToken(), exchangePublicToken(db, publicToken, metadata), syncConnection(db, connection), check() }`. The built-in `mock` adapter ("Demo Bank") needs no credentials: linking it seeds three accounts (Demo Checking, Demo Credit Card, Demo Brokerage) with ~12 months of deterministic transactions, its fake access token still flows through the real `cryptoVault` encryption path, and each subsequent `/api/sync` trickles 2-5 new transactions via a cursor exactly like Plaid's incremental sync.
+
+## Tests
+
+Node's built-in runner only — no test dependencies. From the repo root:
+
+```powershell
+node --test "backend/test/*.test.mjs"
+```
+
+or from `backend/`:
+
+```powershell
+npm.cmd run test        # node --test "test/**/*.test.mjs"
+```
+
+> Note: the bare directory form `node --test backend/test/` does **not** discover these files on this setup — use the quoted glob (or explicit file paths).
+
+Suites (75 tests):
+
+| File | Covers |
+| --- | --- |
+| `test/insights.test.mjs` | Pure detector/forecast/savings algorithms (the Insights algorithms contract above) |
+| `test/providers.test.mjs` | Provider registry: lookup, unknown-provider handling, `registerProvider` validation/duplicate refusal, Plaid readiness check's not-configured path, `listProviders` public shape |
+| `test/mockSync.test.mjs` | Demo Bank cursor sync on a scratch DB: deterministic backlog, cursor advance, incremental-only deliveries, idempotent re-sync/re-link (zero duplicates), to-the-cent balance reconciliation, encrypted-at-rest token (raw file bytes scanned for plaintext), tampered-token 401 |
+| `test/syncEngine.test.mjs` | Error classification table; retry/backoff via injected fake providers (transient retries up to 3 attempts, permanent classes fail fast, unknown provider → `config`, one failing connection never aborts another) |
+| `test/appleImport.test.mjs` | CSV parser (real `Amount (USD)` headers, quoting, paren negatives, BOM, malformed-row skipping, formula chars kept as data) plus import dedup through the store (same CSV twice → zero new rows; near-duplicates preserved) |
+| `test/storeHardening.test.mjs` | `listTransactions` limit clamp and the insights `inputTruncated` signal on a >5000-row ledger |
+
+Every suite pins `PFOS_DB_PATH`/`PFOS_DATA_DIR` to a scratch directory before importing any source module, so tests can never touch `data/finance-os.sqlite`, and presets empty `PLAID_*` variables so a developer's `.env` cannot leak into the not-configured assertions.
 
 ## QA
 

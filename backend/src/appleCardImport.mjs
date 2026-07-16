@@ -40,9 +40,21 @@ function parseDate(value) {
 
 function parseAmount(value) {
   if (!value) return 0
-  const cleaned = String(value).replace(/[$,]/g, '').replace(/[()]/g, '-')
-  const amount = Number(cleaned)
+  const cleaned = String(value).trim().replace(/[$,]/g, '')
+  // Accounting-style negatives: "(45.00)" means -45.00. The old blanket
+  // paren->'-' replacement produced "-45.00-" -> NaN -> 0, silently zeroing
+  // every parenthesized amount.
+  const parenNegative = /^\(.*\)$/.test(cleaned)
+  const amount = Number(parenNegative ? `-${cleaned.slice(1, -1)}` : cleaned)
   return Number.isFinite(amount) ? amount : 0
+}
+
+// A row is worth importing only if it has a real date or a real amount.
+// Export files can carry summary/total lines, stray separators, or truncated
+// rows; those must be skipped without aborting the rest of the import.
+function isMeaningfulRow(date, amount) {
+  const validDate = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+  return validDate || amount !== 0
 }
 
 export function parseAppleCardCsv(csvText) {
@@ -53,13 +65,17 @@ export function parseAppleCardCsv(csvText) {
   if (lines.length < 2) return []
 
   const headers = splitCsvLine(lines[0]).map(normalizeHeader)
-  return lines.slice(1).map((line) => {
+  return lines.slice(1).flatMap((line) => {
     const cells = splitCsvLine(line)
     const row = Object.fromEntries(headers.map((h, i) => [h, cells[i] || '']))
     const date = parseDate(row.transaction_date || row.date || row.posted_date || row.clearing_date)
     const merchant = row.description || row.merchant || row.name || row.payee || 'Apple Card transaction'
-    const rawAmount = row.amount || row.debit || row.credit || row.transaction_amount
+    // Real Apple Card exports title the column "Amount (USD)", which
+    // normalizes to amount_usd — without that fallback every genuine Wallet /
+    // card.apple.com export imported with amount 0.
+    const rawAmount = row.amount || row.amount_usd || row.debit || row.credit || row.transaction_amount
     const amount = parseAmount(rawAmount)
+    if (!isMeaningfulRow(date, amount)) return []
     const category = row.category || row.type || row.transaction_type || 'Uncategorized'
     const idSeed = `apple-card:${date}:${merchant}:${amount}:${row.daily_cash || ''}`
 
